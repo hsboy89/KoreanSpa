@@ -81,13 +81,20 @@ export class Controls {
 
   /** 카메라를 특정 위치로 옮기고 바라볼 지점을 맞춘다 (불가마 입장 등) */
   placeCamera(pos: THREE.Vector3, focus: THREE.Vector3) {
+    // 직전 드래그의 관성을 먼저 없앤다. 남아 있으면 매번 조금씩 다른 시점이 된다
+    this.orbit.enableDamping = false;
+    this.orbit.update();
     this.camera.position.copy(pos);
     this.snapTo(focus);
     this.orbit.update();
+    this.orbit.enableDamping = true;
   }
 
-  setMaxDistance(d: number) {
-    this.orbit.maxDistance = d;
+  /** 불가마 안에서는 문틀 뒤로 내려가거나 천장을 뚫지 않게 시점을 제한한다 */
+  setSaunaView(on: boolean) {
+    this.orbit.maxDistance = on ? 3.9 : 11;
+    this.orbit.minPolarAngle = on ? 0.45 : 0.3;
+    this.orbit.maxPolarAngle = on ? 1 : Math.PI / 2 - 0.06;
   }
 
   update(dt: number, focus: THREE.Vector3) {

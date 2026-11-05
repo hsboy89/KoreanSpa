@@ -13,6 +13,8 @@ interface Task { kind: TaskKind; matIndex?: number; doingUntil?: number }
 
 interface Bot { peer: Peer; avatar: Avatar; nextWander: number }
 
+const SAUNA_DOME_OPACITY = 0.16;
+
 export class Game {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
@@ -221,11 +223,13 @@ export class Game {
         this.player.setPose('sit');
         this.inSauna = true;
         this.saunaStart = now;
-        // 자리 바로 뒤에서 불을 바라보도록 카메라를 당긴다
-        this.controls.setMaxDistance(5);
+        // 어디서 들어오든 같은 시점으로, 천장 아래에서 내 자리와 불을 함께 내려다본다
+        (w.dome.material as THREE.MeshStandardMaterial).opacity = SAUNA_DOME_OPACITY;
+        w.dome.castShadow = false;
+        this.controls.setSaunaView(true);
         this.controls.placeCamera(
-          new THREE.Vector3(seat.pos.x + 0.6, 2.1, seat.pos.z + 3.6),
-          new THREE.Vector3(seat.pos.x, 0.9, seat.pos.z - 0.8),
+          new THREE.Vector3(w.saunaCenter.x, 3.85, w.saunaCenter.z + 2.9),
+          this.saunaFocus(),
         );
         this.hud.setActive('sauna');
         this.hud.toast('불가마에 들어왔어요. 버틸 수 있을 만큼만 버텨요.');
@@ -300,7 +304,7 @@ export class Game {
     this.record({ saunaSec: sec });
     this.hud.setSauna(false);
     this.hud.setActive(null);
-    this.controls.setMaxDistance(11);
+    this.controls.setSaunaView(false);
     this.player.setPose('idle');
     this.player.group.position.copy(this.world.saunaDoor);
     this.player.faceYaw(0);
@@ -390,7 +394,14 @@ export class Game {
 
   // ───────── 루프 ─────────
 
+  /** 내 자리가 하단 타이머에 가리지 않도록 불보다 자리 쪽에 둔다 */
+  private saunaFocus() {
+    const c = this.world.saunaCenter;
+    return new THREE.Vector3(c.x, 0.55, c.z + 1.05);
+  }
+
   private focusPoint() {
+    if (this.inSauna) return this.saunaFocus();
     const p = this.player.group.position.clone();
     p.y += this.player.pose === 'lie' ? 0.5 : 1.0;
     return p;
@@ -425,7 +436,7 @@ export class Game {
     this.world.fire.update(dt, this.fireState.litAt === null ? 0 : f);
     (this.world.doorGlow.material as THREE.MeshBasicMaterial).opacity = 0.1 + 0.6 * (this.fireState.litAt === null ? 0 : f);
     const domeMat = this.world.dome.material as THREE.MeshStandardMaterial;
-    const targetOpacity = this.inSauna ? 0.16 : 1;
+    const targetOpacity = this.inSauna ? SAUNA_DOME_OPACITY : 1;
     domeMat.opacity += (targetOpacity - domeMat.opacity) * Math.min(1, dt * 4);
     this.world.dome.castShadow = domeMat.opacity > 0.6;
 
