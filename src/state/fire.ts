@@ -1,7 +1,6 @@
 /**
  * 불가마의 "꺼지지 않는 불" 전역 상태.
- * 지금은 LocalFireStore(브라우저 로컬)만 있고, 나중에 Supabase 테이블 + Realtime을
- * 같은 FireStore 인터페이스로 구현해 갈아끼운다.
+ * 배포본은 SupabaseFireStore(supabaseFire.ts), 환경변수 없는 로컬 개발은 LocalFireStore를 쓴다.
  */
 export interface FireState {
   /** 0..1 장작 잔량 */
@@ -19,8 +18,34 @@ export interface FireStore {
   readonly burnMs: number;
   get(): FireState;
   subscribe(cb: (s: FireState) => void): () => void;
-  addLog(): FireState;
-  relight(): FireState;
+  /** 장작을 넣는다. 꺼져 있으면 다시 지핀다. */
+  addLog(): Promise<FireState>;
+}
+
+/** 서버가 사용자별 쿨다운으로 장작 넣기를 거절했을 때 */
+export class LogCooldownError extends Error {}
+
+/** Supabase public.fire 행 */
+export interface FireRow {
+  fuel: number;
+  lit_at: string | null;
+  out_at: string | null;
+  logs: number;
+  burn_seconds: number;
+  updated_at: string;
+}
+
+/** 서버 행을 주어진 시각의 상태로 환산한다. 잔량이 다 떨어졌으면 그 시점에 꺼진 것이다. */
+export function deriveFire(row: FireRow, now: number): FireState {
+  const toMs = (t: string | null) => (t === null ? null : Date.parse(t));
+  const updatedAt = Date.parse(row.updated_at);
+  const litAt = toMs(row.lit_at);
+  if (litAt === null) return { fuel: 0, litAt: null, outAt: toMs(row.out_at), logs: row.logs };
+  const fuel = row.fuel - Math.max(0, now - updatedAt) / (row.burn_seconds * 1000);
+  if (fuel <= 0) {
+    return { fuel: 0, litAt: null, outAt: updatedAt + row.fuel * row.burn_seconds * 1000, logs: row.logs };
+  }
+  return { fuel, litAt, outAt: null, logs: row.logs };
 }
 
 const KEY = 'ondol.fire.local.v1';
@@ -49,7 +74,7 @@ export class LocalFireStore implements FireStore {
     return () => { this.subs.delete(cb); };
   }
 
-  addLog() {
+  async addLog() {
     const s = this.state;
     if (s.litAt === null) return this.relight();
     s.fuel = Math.min(1, s.fuel + LOG_FUEL);
@@ -58,7 +83,7 @@ export class LocalFireStore implements FireStore {
     return this.get();
   }
 
-  relight() {
+  private relight() {
     const s = this.state;
     s.litAt = Date.now();
     s.outAt = null;

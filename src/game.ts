@@ -3,9 +3,9 @@ import { buildWorld, type World } from './scene/world';
 import { Avatar, cupProp, eggProp, logProp } from './scene/avatar';
 import { Controls } from './scene/controls';
 import { Hud, type ActionId } from './ui/hud';
-import { LocalFireStore, type FireState, type FireStore } from './state/fire';
+import { LogCooldownError, type FireState, type FireStore } from './state/fire';
 import { mockPeers, randomName, ROBES, type Peer } from './state/presence';
-import { loadStats, saveStats, type Stats } from './state/stats';
+import { addStats, type Stats, type StatsStore } from './state/stats';
 import { Ambient } from './audio/ambient';
 
 type TaskKind = 'lie' | 'sauna' | 'egg' | 'sikhye' | 'log';
@@ -35,7 +35,7 @@ export class Game {
   private myMat: number | null = null;
   private keyWalking = false;
 
-  constructor(root: HTMLElement) {
+  constructor(root: HTMLElement, fire: FireStore, private statsStore: StatsStore, private offline = false) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -73,9 +73,9 @@ export class Game {
     this.camera.position.set(0, 4.2, 9.5);
     this.controls.snapTo(this.focusPoint());
 
-    this.fire = new LocalFireStore();
+    this.fire = fire;
     this.fireState = this.fire.get();
-    this.stats = loadStats();
+    this.stats = statsStore.initial;
 
     this.hud = new Hud(root, this.fire.burnMs, {
       onAction: id => this.action(id),
@@ -98,7 +98,8 @@ export class Game {
   }
 
   start() {
-    this.hud.toast(`${this.player.name}님, 잠깐 누워가요.`, 3500);
+    if (this.offline) this.hud.toast('서버에 연결하지 못했어요. 지금 불은 이 브라우저에만 보여요.', 6000);
+    else this.hud.toast(`${this.player.name}님, 잠깐 누워가요.`, 3500);
     this.renderer.setAnimationLoop(() => this.frame());
   }
 
@@ -257,32 +258,46 @@ export class Game {
     this.hud.setActive(null);
     switch (task.kind) {
       case 'egg':
-        this.stats.eggs += 1;
+        this.record({ eggs: 1 });
         this.hud.toast(`맥반석 계란 ${this.stats.eggs}개째. 톡톡, 어깨에 깼어요.`);
         break;
       case 'sikhye':
-        this.stats.sikhye += 1;
+        this.record({ sikhye: 1 });
         this.hud.toast('식혜 한 모금. 시원해요.');
         break;
-      case 'log': {
-        const wasOut = this.fireState.litAt === null;
-        const s = this.fire.addLog();
-        this.stats.logs += 1;
-        this.hud.toast(wasOut ? '불을 다시 지폈어요. 이번엔 꺼지지 않게 지켜요.' : `장작을 넣었어요. 불이 ${Math.round(s.fuel * 100)}%까지 살아났어요.`);
+      case 'log':
+        void this.feedFire();
         break;
-      }
     }
-    saveStats(this.stats);
+  }
+
+  private record(delta: Partial<Stats>) {
+    this.stats = addStats(this.stats, delta);
+    this.statsStore.add(delta);
     this.hud.setStats(this.stats);
+  }
+
+  private async feedFire() {
+    const wasOut = this.fireState.litAt === null;
+    try {
+      const s = await this.fire.addLog();
+      this.record({ logs: 1 });
+      this.hud.toast(wasOut ? '불을 다시 지폈어요. 이번엔 꺼지지 않게 지켜요.' : `장작을 넣었어요. 불이 ${Math.round(s.fuel * 100)}%까지 살아났어요.`);
+    } catch (err) {
+      if (err instanceof LogCooldownError) {
+        this.hud.toast('방금 장작을 넣었어요. 잠깐 쉬었다가 넣어주세요.');
+        return;
+      }
+      console.error('장작 넣기 실패', err);
+      this.hud.toast('장작을 넣지 못했어요. 잠시 뒤에 다시 해주세요.');
+    }
   }
 
   private exitSauna(announce = true) {
     if (!this.inSauna) return;
     const sec = Math.floor((performance.now() - this.saunaStart) / 1000);
     this.inSauna = false;
-    this.stats.saunaSec += sec;
-    saveStats(this.stats);
-    this.hud.setStats(this.stats);
+    this.record({ saunaSec: sec });
     this.hud.setSauna(false);
     this.hud.setActive(null);
     this.controls.setMaxDistance(11);

@@ -7,18 +7,7 @@
 <meta name="description" content="말없이 같이 누워 있는 온라인 찜질방, 온돌. 불가마의 불을 함께 지켜요.">
 <title>온돌, 잠깐 누워가요</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
-<style>
-  .boot { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:12px; padding:24px; background:#231a15; color:#e9d8c0; font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",sans-serif; text-align:center; z-index:50; transition:opacity .6s ease; }
-  .boot.is-hiding { opacity:0; pointer-events:none; }
-  .boot svg { width:36px; height:36px; color:#ff8a3d; }
-  .boot h1 { margin:0; font-size:26px; font-weight:500; letter-spacing:6px; padding-left:6px; }
-  .boot p { margin:0; font-size:12px; color:#a8937a; line-height:1.7; }
-  .boot-dot { width:5px; height:5px; margin-top:16px; border-radius:50%; background:#ff8a3d; animation:breathe 1.8s ease-in-out infinite; }
-  @keyframes breathe { 50% { opacity:.2; } }
-  @media (prefers-reduced-motion:reduce) { .boot-dot { animation:none; } }
-</style>
+<link rel="stylesheet" href="/src/boot.css">
 <script type="module" src="/src/main.ts"></script>
 </head>
 <body>
@@ -29,6 +18,6 @@
   <p id="boot-message">찜질방 문을 여는 중</p>
   <span class="boot-dot" aria-hidden="true"></span>
 </main>
-<noscript><main style="padding:3rem;max-width:36rem;margin:auto;color:#e9d8c0;font-family:sans-serif;line-height:1.8"><h1>온돌 · 온라인 찜질방</h1><p>양머리 수건 쓰고, 불가마에서 버티고, 잠깐 누워가는 공간입니다.</p><p>들어오려면 브라우저의 JavaScript를 켜주세요.</p></main></noscript>
+<noscript><main class="noscript"><h1>온돌 · 온라인 찜질방</h1><p>양머리 수건 쓰고, 불가마에서 버티고, 잠깐 누워가는 공간입니다.</p><p>들어오려면 브라우저의 JavaScript를 켜주세요.</p></main></noscript>
 </body>
 </html>

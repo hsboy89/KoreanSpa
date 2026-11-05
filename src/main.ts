@@ -1,5 +1,8 @@
+import 'pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css';
 import './styles.css';
 import { Game } from './game';
+import { connectFire } from './state/supabaseFire';
+import { connectStats } from './state/supabaseStats';
 
 const boot = document.getElementById('boot')!;
 const bootMsg = document.getElementById('boot-message')!;
@@ -7,7 +10,8 @@ const app = document.getElementById('app')!;
 
 async function main() {
   try {
-    const game = new Game(app);
+    const [{ store, offline }, stats] = await Promise.all([connectFire(), connectStats()]);
+    const game = new Game(app, store, stats, offline);
     // 폰트와 첫 프레임이 준비될 시간을 잠깐 준다
     await Promise.race([document.fonts?.ready ?? Promise.resolve(), new Promise(r => setTimeout(r, 1200))]);
     game.start();
