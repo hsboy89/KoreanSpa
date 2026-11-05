@@ -173,7 +173,7 @@ export class Game {
   private async toggleSound() {
     const on = await this.ambient.toggle();
     this.hud.setSound(on);
-    this.hud.toast(on ? '소리를 켰어요. 불가마 가까이 가면 타닥거려요.' : '소리를 껐어요.');
+    this.hud.toast(on ? '소리를 켰어요. 밖에선 잔잔한 음악이, 불가마에선 장작 소리가 들려요.' : '소리를 껐어요.');
   }
 
   // ───────── 동작 처리 ─────────
@@ -449,6 +449,7 @@ export class Game {
     const dist = this.player.group.position.distanceTo(this.world.saunaCenter);
     const near = this.inSauna ? 1 : THREE.MathUtils.clamp(1 - (dist - 3) / 9, 0.05, 1);
     this.ambient.setCrackle(near * (this.fireState.litAt === null ? 0.05 : 0.3 + 0.7 * f));
+    this.ambient.setMusic(!this.inSauna);
     this.ambient.update(dt);
 
     this.controls.update(dt, this.focusPoint());
