@@ -31,6 +31,8 @@ export class Game {
   private zone: RoomId | null = null;
   private keyWalking = false;
   private cheersTimer = 0;
+  /** 방에 들어갈 때 카메라를 당기는 목표 거리. null이면 사용자가 조절한 대로 둔다 */
+  private zoomTo: number | null = null;
   private occludeRay = new THREE.Ray();
   private occluderBoxes: THREE.Box3[] = [];
   private faded = new Set<THREE.Mesh>();
@@ -70,7 +72,8 @@ export class Game {
     this.spawnBots(mockPeers());
 
     this.controls = new Controls(this.camera, this.renderer.domElement, this.world.floors, p => this.onClickFloor(p), e => this.onKey(e));
-    this.camera.position.set(this.world.spawn.x, 5.6, this.world.spawn.z + 6.8);
+    // 처음엔 라운지 전체가 보이도록 멀리서 시작한다
+    this.camera.position.set(this.world.spawn.x, 24, this.world.spawn.z + 21);
     this.controls.snapTo(this.focusPoint());
 
     this.hud = new Hud(root, {
@@ -242,6 +245,8 @@ export class Game {
     this.zone = zone;
     const theme = zone ? ROOM_THEMES.find(t => t.id === zone)! : null;
     this.hud.setLocation(theme);
+    // 멀리서 보고 있다가 방에 들어가면 가까이 당긴다
+    if (zone && this.controls.distance() > 13) this.zoomTo = 9;
     if (theme) this.hud.toast(`${theme.name} 방이에요. 벽의 QR을 찍으면 이번 주 파티가 보여요.`, 3600);
     else this.hud.toast('광장이에요. 방 목록에서 다른 파티를 골라요.', 2400);
   }
@@ -368,6 +373,11 @@ export class Game {
     this.ambient.setCrackle(0);
     this.ambient.update(dt);
 
+    if (this.zoomTo !== null) {
+      const d = this.controls.distance();
+      if (Math.abs(d - this.zoomTo) < 0.2) this.zoomTo = null;
+      else this.controls.setDistance(THREE.MathUtils.lerp(d, this.zoomTo, Math.min(1, dt * 3)));
+    }
     this.controls.update(dt, this.focusPoint());
     this.fadeOccluders();
     this.renderer.render(this.scene, this.camera);

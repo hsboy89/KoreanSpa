@@ -26,7 +26,7 @@ export class Controls {
     this.orbit.enableDamping = true;
     this.orbit.dampingFactor = 0.08;
     this.orbit.minDistance = 2.2;
-    this.orbit.maxDistance = 12;
+    this.orbit.maxDistance = 36;
     this.orbit.minPolarAngle = 0.3;
     this.orbit.maxPolarAngle = Math.PI / 2 - 0.06;
     this.orbit.rotateSpeed = 0.6;
@@ -77,6 +77,15 @@ export class Controls {
   snapTo(focus: THREE.Vector3) {
     this.follow.copy(focus);
     this.orbit.target.copy(focus);
+  }
+
+  distance() { return this.camera.position.distanceTo(this.orbit.target); }
+
+  /** 바라보는 방향은 유지한 채 거리만 바꾼다 */
+  setDistance(d: number) {
+    const offset = this.camera.position.clone().sub(this.orbit.target);
+    offset.setLength(d);
+    this.camera.position.copy(this.orbit.target).add(offset);
   }
 
   /** 카메라를 특정 위치로 옮기고 바라볼 지점을 맞춘다 (불가마 입장 등) */
