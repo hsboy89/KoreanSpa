@@ -64,7 +64,7 @@ export class Ambient {
     const gain = 0.03 + this.level * 1.6;
     this.crackle.gain.setTargetAtTime(gain, ctx.currentTime, 0.4);
     this.nextPop -= dt;
-    if (this.nextPop <= 0) {
+    if (this.level > 0 && this.nextPop <= 0) {
       this.pop();
       const base = 0.05 + (1 - this.level) * 0.35;
       this.nextPop = base + Math.random() * base * 2;

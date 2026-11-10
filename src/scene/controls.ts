@@ -17,7 +17,7 @@ export class Controls {
   constructor(
     private camera: THREE.PerspectiveCamera,
     private dom: HTMLElement,
-    private floor: THREE.Object3D,
+    private floors: THREE.Object3D[],
     private onClickFloor: (p: THREE.Vector3) => void,
     private onKey: (e: KeyboardEvent) => void,
   ) {
@@ -26,7 +26,7 @@ export class Controls {
     this.orbit.enableDamping = true;
     this.orbit.dampingFactor = 0.08;
     this.orbit.minDistance = 2.2;
-    this.orbit.maxDistance = 11;
+    this.orbit.maxDistance = 12;
     this.orbit.minPolarAngle = 0.3;
     this.orbit.maxPolarAngle = Math.PI / 2 - 0.06;
     this.orbit.rotateSpeed = 0.6;
@@ -54,7 +54,7 @@ export class Controls {
     const r = this.dom.getBoundingClientRect();
     this.ndc.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
     this.ray.setFromCamera(this.ndc, this.camera);
-    const hit = this.ray.intersectObject(this.floor, false)[0];
+    const hit = this.ray.intersectObjects(this.floors, false)[0];
     if (hit) this.onClickFloor(hit.point);
   }
 

@@ -1,19 +1,17 @@
 import * as THREE from 'three';
-import { buildWorld, type World } from './scene/world';
-import { Avatar, cupProp, eggProp, logProp } from './scene/avatar';
+import { buildWorld, type Seat, type World } from './scene/world';
+import { Avatar, cupProp, randomOutfit } from './scene/avatar';
 import { Controls } from './scene/controls';
 import { Hud, type ActionId } from './ui/hud';
-import { LogCooldownError, type FireState, type FireStore } from './state/fire';
-import { mockPeers, randomName, ROBES, type Peer } from './state/presence';
-import { addStats, type Stats, type StatsStore } from './state/stats';
+import { inRect, PLAZA, ROOM_LAYOUTS, ROOM_THEMES, type RoomId } from './scene/rooms';
+import { mockPeers, randomName, type Peer } from './state/presence';
 import { Ambient } from './audio/ambient';
 
-type TaskKind = 'lie' | 'sauna' | 'egg' | 'sikhye' | 'log';
-interface Task { kind: TaskKind; matIndex?: number; doingUntil?: number }
+type Task = { kind: 'sit'; seat: Seat } | { kind: 'enter'; room: RoomId };
 
-interface Bot { peer: Peer; avatar: Avatar; nextWander: number }
+interface Bot { peer: Peer; avatar: Avatar; nextWander: number; seat: Seat | null }
 
-const SAUNA_DOME_OPACITY = 0.16;
+const PLAYER_RADIUS = 0.32;
 
 export class Game {
   private renderer: THREE.WebGLRenderer;
@@ -24,353 +22,259 @@ export class Game {
   private bots: Bot[] = [];
   private controls: Controls;
   private hud: Hud;
-  private fire: FireStore;
-  private fireState: FireState;
   private ambient = new Ambient();
-  private stats: Stats;
   private clock = new THREE.Clock();
 
   private task: Task | null = null;
-  private inSauna = false;
-  private saunaStart = 0;
-  private occupiedMats = new Set<number>();
-  private myMat: number | null = null;
+  private mySeat: Seat | null = null;
+  private takenSeats = new Set<Seat>();
+  private zone: RoomId | null = null;
   private keyWalking = false;
+  private cheersTimer = 0;
+  private occludeRay = new THREE.Ray();
+  private occluderBoxes: THREE.Box3[] = [];
+  private faded = new Set<THREE.Mesh>();
 
-  constructor(root: HTMLElement, fire: FireStore, private statsStore: StatsStore, private offline = false) {
+  constructor(root: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.0;
     root.appendChild(this.renderer.domElement);
 
-    this.scene.background = new THREE.Color(0x1f1612);
-    this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 80);
+    this.scene.background = new THREE.Color(0x17131c);
+    this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 120);
 
-    this.scene.add(new THREE.HemisphereLight(0xffe2c0, 0x5a3a28, 0.55));
-    this.scene.add(new THREE.AmbientLight(0xffd9b5, 0.25));
-    const sun = new THREE.DirectionalLight(0xffe8cc, 1.1);
-    sun.position.set(6, 12, 4);
+    this.scene.add(new THREE.HemisphereLight(0xfff4f6, 0x3a2a33, 0.7));
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+    const sun = new THREE.DirectionalLight(0xfff3ea, 1.3);
+    sun.position.set(8, 18, 6);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -15; sun.shadow.camera.right = 15;
-    sun.shadow.camera.top = 12; sun.shadow.camera.bottom = -12;
-    sun.shadow.camera.near = 1; sun.shadow.camera.far = 40;
-    sun.shadow.bias = -0.0008;
+    sun.shadow.camera.left = -22; sun.shadow.camera.right = 22;
+    sun.shadow.camera.top = 18; sun.shadow.camera.bottom = -18;
+    sun.shadow.camera.near = 1; sun.shadow.camera.far = 50;
+    sun.shadow.bias = -0.0006;
     this.scene.add(sun);
 
     this.world = buildWorld(this.scene);
 
-    this.player = new Avatar(randomName(), ROBES[Math.floor(Math.random() * ROBES.length)], true);
-    this.player.group.position.set(0, 0, 3.5);
+    this.player = new Avatar(randomName(), randomOutfit());
+    this.player.group.position.copy(this.world.spawn);
     this.player.faceYaw(Math.PI);
     this.scene.add(this.player.group);
 
     this.spawnBots(mockPeers());
 
-    this.controls = new Controls(this.camera, this.renderer.domElement, this.world.floor, p => this.onClickFloor(p), e => this.onKey(e));
-    this.camera.position.set(0, 4.2, 9.5);
+    this.controls = new Controls(this.camera, this.renderer.domElement, this.world.floors, p => this.onClickFloor(p), e => this.onKey(e));
+    this.camera.position.set(this.world.spawn.x, 5.6, this.world.spawn.z + 6.8);
     this.controls.snapTo(this.focusPoint());
 
-    this.fire = fire;
-    this.fireState = this.fire.get();
-    this.stats = statsStore.initial;
-
-    this.hud = new Hud(root, this.fire.burnMs, {
+    this.hud = new Hud(root, {
       onAction: id => this.action(id),
-      onAddLog: () => this.goAddLog(),
+      onGoRoom: id => this.goRoom(id),
       onSound: () => this.toggleSound(),
-      onExitSauna: () => this.exitSauna(),
     });
     this.hud.setPresence(this.bots.length + 1);
-    this.hud.setStats(this.stats);
-    this.hud.setTowelState(true);
-    this.fire.subscribe(s => {
-      const wasLit = this.fireState.litAt !== null;
-      this.fireState = s;
-      this.hud.setFire(s);
-      if (wasLit && s.litAt === null) this.hud.toast('불이 꺼졌어요. 장작더미에서 다시 지펴주세요.', 5000);
-    });
+    this.hud.setLocation(null);
+    this.refreshRoomCards();
 
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', () => { if (!document.hidden) this.clock.getDelta(); });
+
+    // 가림 판정용 경계 상자. 벽과 명패는 움직이지 않으므로 한 번만 계산한다
+    this.scene.updateMatrixWorld(true);
+    this.occluderBoxes = this.world.occluders.map(m => new THREE.Box3().setFromObject(m).expandByScalar(0.45));
   }
 
   start() {
-    if (this.offline) this.hud.toast('서버에 연결하지 못했어요. 지금 불은 이 브라우저에만 보여요.', 6000);
-    else this.hud.toast(`${this.player.name}님, 잠깐 누워가요.`, 3500);
+    this.hud.toast(`${this.player.name}님, 파팅 라운지에 오셨어요. 끌리는 방으로 가볼까요?`, 4000);
     this.renderer.setAnimationLoop(() => this.frame());
   }
 
   // ───────── 입력 ─────────
 
   private onClickFloor(p: THREE.Vector3) {
-    if (this.hud.helpOpen) return;
-    const w = this.world;
+    if (this.hud.modalOpen) return;
     const target = p.clone();
     target.y = 0;
-    const toSauna = target.distanceTo(w.saunaCenter);
-    if (toSauna < w.saunaRadius + 0.4) {
-      // 불가마를 누르면 입구로
-      this.walkTo(w.saunaDoor, null);
-      return;
-    }
-    if (w.counterBox.containsPoint(target)) target.copy(w.counter);
-    this.clampToRoom(target);
-    this.walkTo(target, null);
+    this.pushOutOfObstacles(target, 0.2);
+    this.task = null;
+    this.standUp();
+    this.player.walkTo(this.pathTo(target));
   }
 
   private onKey(e: KeyboardEvent) {
     if (e.repeat) return;
-    if (e.key === 'Escape') { this.hud.showHelp(false); return; }
-    if (this.hud.helpOpen) return;
-    const map: Record<string, ActionId> = { '1': 'lie', '2': 'sauna', '3': 'towel', '4': 'egg', '5': 'sikhye' };
+    if (e.key === 'Escape') { this.hud.closeModals(); return; }
+    if (this.hud.modalOpen) return;
+    const map: Record<string, ActionId> = { '1': 'rooms', '2': 'sit', '3': 'wave', '4': 'cheers' };
     const a = map[e.key];
     if (a) this.action(a);
   }
 
   private action(id: ActionId) {
-    const w = this.world;
     switch (id) {
-      case 'towel': {
-        const on = !this.player.hasTowel();
-        this.player.setTowel(on);
-        this.hud.setTowelState(on);
-        this.hud.toast(on ? '양머리 수건을 접어 썼어요.' : '수건을 풀었어요.');
+      case 'rooms':
+        this.refreshRoomCards();
+        this.hud.showRooms(true);
+        break;
+      case 'sit': {
+        if (this.mySeat) { this.standUp(); this.hud.toast('일어났어요.'); break; }
+        const seat = this.nearestFreeSeat();
+        if (!seat) { this.hud.toast('근처에 빈 자리가 없어요. 다른 방으로 가볼까요?'); break; }
+        this.task = { kind: 'sit', seat };
+        this.player.walkTo(this.pathTo(seat.pos));
+        this.hud.toast('빈 자리로 걸어가요.');
         break;
       }
-      case 'lie': {
-        if (this.player.pose === 'lie') { this.standUp(); this.hud.toast('일어났어요.'); break; }
-        const idx = this.nearestFreeMat();
-        if (idx === null) { this.hud.toast('빈 매트가 없어요. 잠시 뒤에 다시 눌러주세요.'); break; }
-        this.walkTo(w.mats[idx].pos, { kind: 'lie', matIndex: idx });
-        this.hud.toast('빈 매트로 걸어가요.');
+      case 'wave':
+        this.player.play('wave');
+        this.hud.toast('손을 흔들었어요.');
         break;
-      }
-      case 'sauna': {
-        if (this.inSauna) { this.exitSauna(); break; }
-        this.walkTo(w.saunaDoor, { kind: 'sauna' });
-        this.hud.toast('불가마로 걸어가요.');
+      case 'cheers':
+        this.player.hold(cupProp());
+        this.player.play('cheers', 2000);
+        window.clearTimeout(this.cheersTimer);
+        this.cheersTimer = window.setTimeout(() => this.player.hold(null), 2100);
+        this.hud.toast('건배!');
         break;
-      }
-      case 'egg':
-      case 'sikhye': {
-        this.walkTo(w.counter, { kind: id });
-        this.hud.toast('매점으로 걸어가요.');
-        break;
-      }
     }
   }
 
-  private goAddLog() {
-    this.walkTo(this.world.woodpile, { kind: 'log' });
-    this.hud.toast('장작더미로 걸어가요.');
+  private goRoom(id: RoomId) {
+    const info = this.world.rooms.get(id)!;
+    const theme = ROOM_THEMES.find(t => t.id === id)!;
+    this.standUp();
+    this.task = { kind: 'enter', room: id };
+    const inside = info.doorIn.clone().addScaledVector(info.center.clone().sub(info.doorIn).normalize(), 1.2);
+    this.player.walkTo(this.pathTo(inside));
+    this.hud.toast(`${theme.name} 방으로 걸어가요.`);
   }
 
   private async toggleSound() {
     const on = await this.ambient.toggle();
     this.hud.setSound(on);
-    this.hud.toast(on ? '소리를 켰어요. 밖에선 잔잔한 음악이, 불가마에선 장작 소리가 들려요.' : '소리를 껐어요.');
+    this.hud.toast(on ? '소리를 켰어요. 잔잔한 라운지 음악이 흘러요.' : '소리를 껐어요.');
   }
 
-  // ───────── 동작 처리 ─────────
+  // ───────── 이동 · 경로 ─────────
 
-  private walkTo(p: THREE.Vector3, task: Task | null) {
-    this.standUp();
-    this.player.hold(null);
-    this.player.target = p.clone();
-    this.task = task;
-    this.hud.setActive(task && task.kind !== 'log' ? (task.kind as ActionId) : null);
+  private zoneOf(p: THREE.Vector3): RoomId | null {
+    for (const l of ROOM_LAYOUTS) if (inRect(l.rect, p.x, p.z)) return l.theme.id;
+    return null;
   }
 
-  /** 눕거나 불가마에 있으면 일어선다 */
-  private standUp() {
-    if (this.player.pose === 'lie') {
-      this.player.setPose('idle');
-      if (this.myMat !== null) { this.occupiedMats.delete(this.myMat); this.myMat = null; }
+  /** 광장과 방 사이를 오갈 때는 문을 거쳐 간다 */
+  private pathTo(target: THREE.Vector3): THREE.Vector3[] {
+    const from = this.zoneOf(this.player.group.position);
+    const to = this.zoneOf(target);
+    const path: THREE.Vector3[] = [];
+    if (from === to) return [target];
+    if (from) { const r = this.world.rooms.get(from)!; path.push(r.doorIn, r.doorOut); }
+    if (to) { const r = this.world.rooms.get(to)!; path.push(r.doorOut, r.doorIn); }
+    path.push(target);
+    return path;
+  }
+
+  private pushOutOfObstacles(v: THREE.Vector3, radius: number) {
+    for (const o of this.world.obstacles) {
+      const dx = v.x - o.x, dz = v.z - o.z;
+      const d = Math.hypot(dx, dz);
+      const min = o.r + radius;
+      if (d < min && d > 1e-4) { v.x = o.x + (dx / d) * min; v.z = o.z + (dz / d) * min; }
     }
-    if (this.inSauna) this.exitSauna(false);
+  }
+
+  private pushOutOfWalls(v: THREE.Vector3, radius: number) {
+    for (const w of this.world.walls) {
+      const minX = w.minX - radius, maxX = w.maxX + radius, minZ = w.minZ - radius, maxZ = w.maxZ + radius;
+      if (v.x <= minX || v.x >= maxX || v.z <= minZ || v.z >= maxZ) continue;
+      const dl = v.x - minX, dr = maxX - v.x, dn = v.z - minZ, ds = maxZ - v.z;
+      const m = Math.min(dl, dr, dn, ds);
+      if (m === dl) v.x = minX; else if (m === dr) v.x = maxX; else if (m === dn) v.z = minZ; else v.z = maxZ;
+    }
+    // 바닥 밖으로 나가지 않게
+    const inside = inRect(PLAZA, v.x, v.z, -0.1) || ROOM_LAYOUTS.some(l => inRect(l.rect, v.x, v.z, -0.1));
+    if (!inside) {
+      v.x = THREE.MathUtils.clamp(v.x, -18.9, 18.9);
+      v.z = THREE.MathUtils.clamp(v.z, -14.9, 14.9);
+    }
+  }
+
+  private standUp() {
+    if (this.mySeat) { this.takenSeats.delete(this.mySeat); this.mySeat = null; this.hud.setSeated(false); }
     if (this.player.pose === 'sit') this.player.setPose('idle');
-    this.hud.setActive(null);
+  }
+
+  private nearestFreeSeat(): Seat | null {
+    const p = this.player.group.position;
+    const zone = this.zoneOf(p);
+    let best: Seat | null = null, bestD = Infinity;
+    for (const s of this.world.seats) {
+      if (this.takenSeats.has(s) || s.room !== zone) continue;
+      const d = s.pos.distanceToSquared(p);
+      if (d < bestD) { bestD = d; best = s; }
+    }
+    return best;
   }
 
   private onArrive() {
     const task = this.task;
-    if (!task) return;
-    const w = this.world;
-    const now = performance.now();
-    switch (task.kind) {
-      case 'lie': {
-        const idx = task.matIndex!;
-        if (this.occupiedMats.has(idx)) { this.task = null; this.hud.toast('누가 먼저 누웠어요. 다른 매트를 찾아요.'); this.action('lie'); return; }
-        this.occupiedMats.add(idx);
-        this.myMat = idx;
-        this.player.group.position.copy(w.mats[idx].pos);
-        this.player.faceYaw(w.mats[idx].yaw);
-        this.player.setPose('lie');
-        this.hud.setActive('lie');
-        this.hud.toast('누웠어요. 천장 보면서 잠깐 쉬어요.');
-        this.task = null;
-        break;
-      }
-      case 'sauna': {
-        const seat = w.saunaSeats[0];
-        this.player.group.position.copy(seat.pos);
-        this.player.faceYaw(seat.yaw);
-        this.player.setPose('sit');
-        this.inSauna = true;
-        this.saunaStart = now;
-        // 어디서 들어오든 같은 시점으로, 천장 아래에서 내 자리와 불을 함께 내려다본다
-        (w.dome.material as THREE.MeshStandardMaterial).opacity = SAUNA_DOME_OPACITY;
-        w.dome.castShadow = false;
-        this.controls.setSaunaView(true);
-        this.controls.placeCamera(
-          new THREE.Vector3(w.saunaCenter.x, 3.85, w.saunaCenter.z + 2.9),
-          this.saunaFocus(),
-        );
-        this.hud.setActive('sauna');
-        this.hud.toast('불가마에 들어왔어요. 버틸 수 있을 만큼만 버텨요.');
-        this.task = null;
-        break;
-      }
-      case 'egg':
-      case 'sikhye': {
-        if (task.doingUntil) return;
-        this.player.faceYaw(0);
-        this.player.hold(task.kind === 'egg' ? eggProp() : cupProp());
-        task.doingUntil = now + 2600;
-        break;
-      }
-      case 'log': {
-        if (task.doingUntil) return;
-        this.player.faceYaw(-Math.PI / 2);
-        this.player.hold(logProp());
-        task.doingUntil = now + 1400;
-        break;
-      }
-    }
-  }
-
-  private finishTask() {
-    const task = this.task;
-    if (!task) return;
     this.task = null;
-    this.player.hold(null);
-    this.hud.setActive(null);
-    switch (task.kind) {
-      case 'egg':
-        this.record({ eggs: 1 });
-        this.hud.toast(`맥반석 계란 ${this.stats.eggs}개째. 톡톡, 어깨에 깼어요.`);
-        break;
-      case 'sikhye':
-        this.record({ sikhye: 1 });
-        this.hud.toast('식혜 한 모금. 시원해요.');
-        break;
-      case 'log':
-        void this.feedFire();
-        break;
+    if (!task) return;
+    if (task.kind === 'sit') {
+      if (this.takenSeats.has(task.seat)) { this.hud.toast('누가 먼저 앉았어요. 다른 자리를 찾아요.'); this.action('sit'); return; }
+      this.takenSeats.add(task.seat);
+      this.mySeat = task.seat;
+      this.player.group.position.copy(task.seat.pos);
+      this.player.faceYaw(task.seat.yaw);
+      this.player.setPose('sit');
+      this.hud.setSeated(true);
+      this.hud.toast('앉았어요. 같이 앉은 사람에게 손을 흔들어 볼까요?');
     }
   }
 
-  private record(delta: Partial<Stats>) {
-    this.stats = addStats(this.stats, delta);
-    this.statsStore.add(delta);
-    this.hud.setStats(this.stats);
+  private onZoneChange(zone: RoomId | null) {
+    this.zone = zone;
+    const theme = zone ? ROOM_THEMES.find(t => t.id === zone)! : null;
+    this.hud.setLocation(theme);
+    if (theme) this.hud.toast(`${theme.name} 방이에요. 벽의 QR을 찍으면 이번 주 파티가 보여요.`, 3600);
+    else this.hud.toast('광장이에요. 방 목록에서 다른 파티를 골라요.', 2400);
   }
 
-  private async feedFire() {
-    const wasOut = this.fireState.litAt === null;
-    try {
-      const s = await this.fire.addLog();
-      this.record({ logs: 1 });
-      this.hud.toast(wasOut ? '불을 다시 지폈어요. 이번엔 꺼지지 않게 지켜요.' : `장작을 넣었어요. 불이 ${Math.round(s.fuel * 100)}%까지 살아났어요.`);
-    } catch (err) {
-      if (err instanceof LogCooldownError) {
-        this.hud.toast('방금 장작을 넣었어요. 잠깐 쉬었다가 넣어주세요.');
-        return;
-      }
-      console.error('장작 넣기 실패', err);
-      this.hud.toast('장작을 넣지 못했어요. 잠시 뒤에 다시 해주세요.');
-    }
-  }
-
-  private exitSauna(announce = true) {
-    if (!this.inSauna) return;
-    const sec = Math.floor((performance.now() - this.saunaStart) / 1000);
-    this.inSauna = false;
-    this.record({ saunaSec: sec });
-    this.hud.setSauna(false);
-    this.hud.setActive(null);
-    this.controls.setSaunaView(false);
-    this.player.setPose('idle');
-    this.player.group.position.copy(this.world.saunaDoor);
-    this.player.faceYaw(0);
-    if (announce) {
-      const m = Math.floor(sec / 60), s = sec % 60;
-      this.hud.toast(m > 0 ? `불가마에서 ${m}분 ${s}초 버텼어요.` : `불가마에서 ${s}초 버텼어요.`, 3500);
-    }
-  }
-
-  private nearestFreeMat(): number | null {
-    const p = this.player.group.position;
-    let best: number | null = null, bestD = Infinity;
-    this.world.mats.forEach((m, i) => {
-      if (this.occupiedMats.has(i)) return;
-      const d = m.pos.distanceToSquared(p);
-      if (d < bestD) { bestD = d; best = i; }
-    });
-    return best;
-  }
-
-  private clampToRoom(v: THREE.Vector3) {
-    const b = this.world.bounds;
-    v.x = THREE.MathUtils.clamp(v.x, b.minX, b.maxX);
-    v.z = THREE.MathUtils.clamp(v.z, b.minZ, b.maxZ);
-  }
-
-  /** 불가마 벽과 매점을 통과하지 않게 밀어낸다 */
-  private resolveObstacles(v: THREE.Vector3) {
-    const w = this.world;
-    const d = new THREE.Vector2(v.x - w.saunaCenter.x, v.z - w.saunaCenter.z);
-    const min = w.saunaRadius + 0.35;
-    if (d.length() < min) {
-      d.normalize().multiplyScalar(min);
-      v.x = w.saunaCenter.x + d.x; v.z = w.saunaCenter.z + d.y;
-    }
-    if (w.counterBox.containsPoint(v)) v.z = w.counterBox.min.z - 0.05;
+  private refreshRoomCards() {
+    this.hud.setRooms(ROOM_THEMES.map(theme => ({
+      theme,
+      count: this.bots.filter(b => b.peer.room === theme.id).length + (this.zone === theme.id ? 1 : 0),
+    })));
   }
 
   // ───────── 봇 ─────────
 
   private spawnBots(peers: Peer[]) {
-    const w = this.world;
-    let saunaSeat = 1;
     for (const peer of peers) {
-      const a = new Avatar(peer.name, peer.robe, peer.towel);
-      const bot: Bot = { peer, avatar: a, nextWander: 2 + Math.random() * 6 };
-      switch (peer.kind) {
-        case 'lie': {
-          const idx = peer.matIndex ?? 0;
-          this.occupiedMats.add(idx);
-          a.group.position.copy(w.mats[idx].pos);
-          a.faceYaw(w.mats[idx].yaw);
-          a.setPose('lie');
-          break;
-        }
-        case 'sauna': {
-          const seat = w.saunaSeats[Math.min(saunaSeat++, w.saunaSeats.length - 1)];
+      const a = new Avatar(peer.name, randomOutfit(Math.random()));
+      a.speed = 1.5;
+      const bot: Bot = { peer, avatar: a, nextWander: 2 + Math.random() * 6, seat: null };
+      const room = peer.room ? this.world.rooms.get(peer.room)! : null;
+      if (peer.kind === 'seat') {
+        const free = this.world.seats.filter(s => s.room === (peer.room ?? null) && !this.takenSeats.has(s));
+        const seat = free[Math.floor(Math.random() * free.length)];
+        if (seat) {
+          this.takenSeats.add(seat); bot.seat = seat;
           a.group.position.copy(seat.pos); a.faceYaw(seat.yaw); a.setPose('sit');
-          break;
         }
-        case 'counter':
-          a.group.position.set(w.counter.x + 1.4, 0, w.counter.z); a.faceYaw(0);
-          break;
-        case 'wander':
-          a.group.position.set(-3, 0, 5); a.speed = 1.4;
-          break;
+      } else if (peer.kind === 'stand' && room) {
+        const p = room.center.clone(); p.x += (Math.random() - 0.5) * 2; p.z += (Math.random() - 0.5) * 2;
+        this.pushOutOfObstacles(p, 0.4);
+        a.group.position.copy(p); a.faceYaw(Math.random() * Math.PI * 2);
+      } else {
+        a.group.position.set((Math.random() - 0.5) * 12, 0, (Math.random() - 0.5) * 8);
+        this.pushOutOfObstacles(a.group.position, 0.5);
       }
       this.scene.add(a.group);
       this.bots.push(bot);
@@ -381,44 +285,66 @@ export class Game {
     for (const b of this.bots) {
       if (b.peer.kind === 'wander') {
         b.nextWander -= dt;
-        if (!b.avatar.target && b.nextWander <= 0) {
-          const t = new THREE.Vector3(-4 + Math.random() * 8, 0, -2 + Math.random() * 8);
-          this.resolveObstacles(t);
-          b.avatar.target = t;
+        if (!b.avatar.moving && b.nextWander <= 0) {
+          const t = new THREE.Vector3((Math.random() - 0.5) * 16, 0, (Math.random() - 0.5) * 10);
+          this.pushOutOfObstacles(t, 0.5);
+          b.avatar.walkTo([t]);
           b.nextWander = 5 + Math.random() * 9;
         }
+        if (Math.random() < dt * 0.05) b.avatar.play('wave');
+      } else if (b.peer.kind === 'stand' && Math.random() < dt * 0.04) {
+        b.avatar.play(Math.random() < 0.5 ? 'wave' : 'cheers');
       }
       b.avatar.update(dt);
+      if (b.avatar.moving) this.pushOutOfObstacles(b.avatar.group.position, PLAYER_RADIUS);
     }
   }
 
   // ───────── 루프 ─────────
 
-  /** 내 자리가 하단 타이머에 가리지 않도록 불보다 자리 쪽에 둔다 */
-  private saunaFocus() {
-    const c = this.world.saunaCenter;
-    return new THREE.Vector3(c.x, 0.55, c.z + 1.05);
+  /** 카메라와 내 캐릭터 사이에 낀 벽과 명패를 반투명하게 */
+  private fadeOccluders() {
+    const from = this.camera.position;
+    const to = this.focusPoint();
+    to.y -= 0.4; // 머리보다 몸통 가운데를 기준으로
+    const dir = to.clone().sub(from);
+    const dist = dir.length() - 0.4;
+    this.occludeRay.set(from, dir.normalize());
+    const hits = new Set<THREE.Mesh>();
+    const hitPoint = new THREE.Vector3();
+    this.occluderBoxes.forEach((box, i) => {
+      if (this.occludeRay.intersectBox(box, hitPoint) && hitPoint.distanceTo(from) < dist) hits.add(this.world.occluders[i]);
+    });
+    for (const m of hits) {
+      if (this.faded.has(m)) continue;
+      const mat = m.material as THREE.Material & { opacity: number };
+      mat.transparent = true; mat.opacity = 0.18; mat.depthWrite = false; mat.needsUpdate = true;
+      m.castShadow = false;
+      this.faded.add(m);
+    }
+    for (const m of this.faded) {
+      if (hits.has(m)) continue;
+      const mat = m.material as THREE.Material & { opacity: number };
+      mat.opacity = 1; mat.transparent = false; mat.depthWrite = true; mat.needsUpdate = true;
+      m.castShadow = true;
+      this.faded.delete(m);
+    }
   }
 
   private focusPoint() {
-    if (this.inSauna) return this.saunaFocus();
     const p = this.player.group.position.clone();
-    p.y += this.player.pose === 'lie' ? 0.5 : 1.0;
+    p.y += 1.0;
     return p;
   }
 
   private frame() {
     const dt = Math.min(this.clock.getDelta(), 0.1);
-    const now = performance.now();
 
-    // WASD
     const mv = this.controls.moveVector();
-    if (mv && !this.hud.helpOpen) {
-      if (!this.keyWalking) { this.standUp(); this.player.target = null; this.task = null; this.player.hold(null); this.keyWalking = true; }
+    if (mv && !this.hud.modalOpen) {
+      if (!this.keyWalking) { this.standUp(); this.player.stop(); this.task = null; this.keyWalking = true; }
       const p = this.player.group.position;
       p.addScaledVector(mv, this.player.speed * dt);
-      this.clampToRoom(p);
-      this.resolveObstacles(p);
       this.player.faceYaw(Math.atan2(mv.x, mv.z));
       if (this.player.pose !== 'walk') this.player.setPose('walk');
     } else if (this.keyWalking) {
@@ -426,33 +352,24 @@ export class Game {
       if (this.player.pose === 'walk') this.player.setPose('idle');
     }
 
-    if (this.player.update(dt)) this.onArrive();
-    if (this.task?.doingUntil && now >= this.task.doingUntil) this.finishTask();
+    const arrived = this.player.update(dt);
+    if (this.player.pose !== 'sit') {
+      this.pushOutOfObstacles(this.player.group.position, PLAYER_RADIUS);
+      this.pushOutOfWalls(this.player.group.position, PLAYER_RADIUS);
+    }
+    if (arrived) this.onArrive();
+
+    const zone = this.zoneOf(this.player.group.position);
+    if (zone !== this.zone) this.onZoneChange(zone);
 
     this.updateBots(dt);
+    this.world.update(dt);
 
-    // 불
-    const f = this.fireState.fuel;
-    this.world.fire.update(dt, this.fireState.litAt === null ? 0 : f);
-    (this.world.doorGlow.material as THREE.MeshBasicMaterial).opacity = 0.1 + 0.6 * (this.fireState.litAt === null ? 0 : f);
-    const domeMat = this.world.dome.material as THREE.MeshStandardMaterial;
-    const targetOpacity = this.inSauna ? SAUNA_DOME_OPACITY : 1;
-    domeMat.opacity += (targetOpacity - domeMat.opacity) * Math.min(1, dt * 4);
-    this.world.dome.castShadow = domeMat.opacity > 0.6;
-
-    if (this.inSauna) {
-      const sec = (now - this.saunaStart) / 1000;
-      this.hud.setSauna(true, sec, sec / 600);
-    }
-
-    // 소리
-    const dist = this.player.group.position.distanceTo(this.world.saunaCenter);
-    const near = this.inSauna ? 1 : THREE.MathUtils.clamp(1 - (dist - 3) / 9, 0.05, 1);
-    this.ambient.setCrackle(near * (this.fireState.litAt === null ? 0.05 : 0.3 + 0.7 * f));
-    this.ambient.setMusic(!this.inSauna);
+    this.ambient.setCrackle(0);
     this.ambient.update(dt);
 
     this.controls.update(dt, this.focusPoint());
+    this.fadeOccluders();
     this.renderer.render(this.scene, this.camera);
   }
 

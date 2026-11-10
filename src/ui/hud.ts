@@ -1,154 +1,127 @@
-import type { FireState } from '../state/fire';
-import { formatSince } from '../state/fire';
-import type { Stats } from '../state/stats';
+import { PARTING_URL, type RoomId, type RoomTheme } from '../scene/rooms';
 
-export type ActionId = 'lie' | 'sauna' | 'towel' | 'egg' | 'sikhye';
+export type ActionId = 'rooms' | 'sit' | 'wave' | 'cheers';
 
 export interface HudHandlers {
   onAction(id: ActionId): void;
-  onAddLog(): void;
+  onGoRoom(id: RoomId): void;
   onSound(): void;
-  onExitSauna(): void;
 }
 
+export interface RoomCard { theme: RoomTheme; count: number }
+
+const LOGO = `<svg viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="24" fill="#ff385c"/><circle cx="50" cy="58" r="26" fill="#fff"/><circle cx="41" cy="54" r="3.2" fill="#ff385c"/><circle cx="59" cy="54" r="3.2" fill="#ff385c"/><path d="M38 61a12 12 0 0 0 24 0" stroke="#ff385c" stroke-width="4" fill="none" stroke-linecap="round"/><path d="M36 36h28L52 7z" fill="#fff"/><circle cx="52" cy="7" r="4.5" fill="#ff385c"/></svg>`;
+
 const ICON = {
-  flame: '<path d="M12 3c1 3 4 4 4 8a4 4 0 0 1-8 0c0-1.5.6-2.5 1.5-3.5.3 1.2 1 2 2.5 2.5C12 8 11 5.5 12 3z"/><path d="M4 21h16"/>',
-  lie: '<path d="M3 17h18"/><path d="M3 17v-5h18v5"/><path d="M3 12V7"/><circle cx="7" cy="9.5" r="1.6"/><path d="M11 12V9.5h7a2 2 0 0 1 2 2.5"/>',
-  towel: '<circle cx="12" cy="12" r="5"/><circle cx="5.5" cy="9" r="2.5"/><circle cx="18.5" cy="9" r="2.5"/><path d="M9 12.5a3 3 0 0 0 6 0"/>',
-  egg: '<path d="M12 3c3.5 0 6 4.5 6 9a6 6 0 0 1-12 0c0-4.5 2.5-9 6-9z"/>',
-  cup: '<path d="M5 8h11v7a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4z"/><path d="M16 10h1.5a2 2 0 0 1 0 4H16"/><path d="M8 4v2M11 3v3"/>',
+  rooms: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  sit: '<path d="M6 11V5a2 2 0 0 1 2-2h5a2 2 0 0 1 2 2v6"/><path d="M4 11h14a2 2 0 0 1 2 2v3H4a2 2 0 0 1-2-2v-1a2 2 0 0 1 2-2z"/><path d="M5 16v5M19 16v5"/>',
+  wave: '<path d="M7 11V6.5a1.5 1.5 0 0 1 3 0V11"/><path d="M10 10V4.5a1.5 1.5 0 0 1 3 0V10"/><path d="M13 10V5.5a1.5 1.5 0 0 1 3 0V12"/><path d="M16 12v-1.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-1a6 6 0 0 1-5.2-3L4 13.5a1.6 1.6 0 0 1 2.8-1.6L8 13.5"/>',
+  cheers: '<path d="M8 3h5l-1 8a2.5 2.5 0 0 1-2.5 2.3A2.5 2.5 0 0 1 7 11z"/><path d="M9.5 13.5V20M7 20h5"/><path d="M15 6l4-1.5 1 5.5a2.5 2.5 0 0 1-2 2.9 2.5 2.5 0 0 1-2.8-1.6z"/><path d="M17.5 13.5l1.2 5.7M16 20.2l4.5-1"/>',
   sound: '<path d="M4 10v4h3l4 3V7L7 10z"/><path d="M15 9a3.5 3.5 0 0 1 0 6"/><path d="M17.5 6.5a7 7 0 0 1 0 11"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .8-1 1.7"/><path d="M12 17h.01"/>',
+  pin: '<path d="M12 21s6-5.3 6-11a6 6 0 0 0-12 0c0 5.7 6 11 6 11z"/><circle cx="12" cy="10" r="2.2"/>',
 };
-const svg = (d: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const svg = (d: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
 
 const ACTIONS: { id: ActionId; label: string; key: string; icon: string }[] = [
-  { id: 'lie', label: '눕기', key: '1', icon: ICON.lie },
-  { id: 'sauna', label: '불가마', key: '2', icon: ICON.flame },
-  { id: 'towel', label: '양머리', key: '3', icon: ICON.towel },
-  { id: 'egg', label: '계란', key: '4', icon: ICON.egg },
-  { id: 'sikhye', label: '식혜', key: '5', icon: ICON.cup },
+  { id: 'rooms', label: '방 목록', key: '1', icon: ICON.rooms },
+  { id: 'sit', label: '앉기', key: '2', icon: ICON.sit },
+  { id: 'wave', label: '손 흔들기', key: '3', icon: ICON.wave },
+  { id: 'cheers', label: '건배', key: '4', icon: ICON.cheers },
 ];
 
 export class Hud {
   private root: HTMLElement;
   private els: Record<string, HTMLElement> = {};
   private toastTimer = 0;
-  private burnMs: number;
-  private lastFire: FireState | null = null;
 
-  constructor(parent: HTMLElement, burnMs: number, handlers: HudHandlers) {
-    this.burnMs = burnMs;
+  constructor(parent: HTMLElement, handlers: HudHandlers) {
     this.root = document.createElement('div');
     this.root.className = 'hud';
     this.root.innerHTML = `
       <header class="hud-top">
         <div class="panel brand">
-          <span class="brand-mark">${svg(ICON.flame)}</span>
-          <div><strong>온돌</strong><small id="presence">함께 1명</small></div>
+          <span class="brand-mark">${LOGO}</span>
+          <div><strong>파팅</strong><small id="presence">함께 1명</small></div>
         </div>
-        <section class="panel fire" id="fire" aria-live="polite">
-          <div class="fire-row">
-            <span class="fire-icon">${svg(ICON.flame)}</span>
-            <div class="fire-text"><strong id="fire-title">불가마 불</strong><small id="fire-sub">확인 중</small></div>
-            <button id="fire-btn" class="btn solid">장작 넣기</button>
-          </div>
-          <div class="fuel"><i id="fuel-bar"></i></div>
+        <section class="panel where" id="where" aria-live="polite">
+          <span class="where-icon">${svg(ICON.pin)}</span>
+          <div class="where-text"><strong id="where-name">광장</strong><small id="where-sub">방 목록에서 가고 싶은 파티를 골라요</small></div>
+          <a class="btn solid" id="where-link" href="${PARTING_URL}" target="_blank" rel="noopener noreferrer">파티 보기 ↗</a>
         </section>
         <div class="panel icons">
           <button id="sound-btn" aria-pressed="false" aria-label="소리 켜기" title="소리">${svg(ICON.sound)}</button>
-          <button id="help-btn" aria-label="조작 방법" title="조작 방법">${svg(ICON.help)}</button>
+          <button id="help-btn" aria-label="도움말" title="도움말">${svg(ICON.help)}</button>
         </div>
       </header>
       <div id="toast" class="toast" role="status" hidden></div>
-      <div id="sauna" class="panel sauna" hidden>
-        <small>불가마 안</small>
-        <strong id="sauna-time">00:00</strong>
-        <span>버티는 중</span>
-        <button id="sauna-exit" class="btn ghost">나가기</button>
-        <div class="heat"><i id="heat-bar"></i></div>
-      </div>
       <nav class="panel bar" aria-label="동작">
         ${ACTIONS.map(a => `<button data-action="${a.id}" aria-label="${a.label}">${svg(a.icon)}<span>${a.label}</span><kbd>${a.key}</kbd></button>`).join('')}
       </nav>
+      <div id="rooms" class="modal" hidden>
+        <div class="panel modal-card rooms-card" role="dialog" aria-modal="true" aria-labelledby="rooms-title">
+          <div class="modal-head"><h2 id="rooms-title">어떤 파티가 끌려요?</h2><button id="rooms-close" class="icon-btn" aria-label="닫기">✕</button></div>
+          <p>방에 들어가면 벽의 QR로 그 카테고리의 이번 주 파티를 볼 수 있어요.</p>
+          <div id="rooms-list" class="rooms-list"></div>
+        </div>
+      </div>
       <div id="help" class="modal" hidden>
         <div class="panel modal-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
-          <h2 id="help-title">온돌 · 온라인 찜질방</h2>
-          <p>말없이 같이 누워 있는 곳이에요. 채팅은 없어요.<br>불가마의 불은 모두가 함께 지켜요. 장작이 떨어지면 꺼져요.</p>
-          <p>바닥 클릭 · WASD · 방향키로 이동<br>드래그로 둘러보기 · 휠과 두 손가락으로 확대/축소<br>1 눕기 · 2 불가마 · 3 양머리 · 4 계란 · 5 식혜</p>
-          <div class="stats">
-            <div><b id="st-sauna">0분</b><small>불가마 버틴 시간</small></div>
-            <div><b id="st-egg">0</b><small>맥반석 계란</small></div>
-            <div><b id="st-log">0</b><small>넣은 장작</small></div>
-          </div>
-          <div class="modal-foot"><button id="help-close" class="btn ghost">닫기</button></div>
+          <div class="modal-head"><h2 id="help-title">파팅 라운지</h2><button id="help-close" class="icon-btn" aria-label="닫기">✕</button></div>
+          <p>파팅의 파티 카테고리를 둘러보는 공간이에요. 채팅은 없고, 같이 있는 사람만 보여요.<br>각 방 벽에 걸린 QR을 폰으로 찍으면 파팅으로 이어져요.</p>
+          <p>바닥 클릭 · WASD · 방향키로 이동<br>드래그로 둘러보기 · 휠과 두 손가락으로 확대/축소<br>1 방 목록 · 2 앉기 · 3 손 흔들기 · 4 건배</p>
+          <div class="modal-foot"><a class="btn solid" href="${PARTING_URL}" target="_blank" rel="noopener noreferrer">parting.io 열기 ↗</a></div>
         </div>
       </div>`;
     parent.appendChild(this.root);
 
-    for (const id of ['presence', 'fire', 'fire-title', 'fire-sub', 'fire-btn', 'fuel-bar', 'sound-btn', 'help-btn', 'toast', 'sauna', 'sauna-time', 'sauna-exit', 'heat-bar', 'help', 'help-close', 'st-sauna', 'st-egg', 'st-log']) {
+    for (const id of ['presence', 'where', 'where-name', 'where-sub', 'where-link', 'sound-btn', 'help-btn', 'toast', 'rooms', 'rooms-list', 'rooms-close', 'help', 'help-close']) {
       this.els[id] = this.root.querySelector<HTMLElement>(`#${id}`)!;
     }
 
     this.root.querySelectorAll<HTMLButtonElement>('[data-action]').forEach(b => {
       b.addEventListener('click', () => handlers.onAction(b.dataset.action as ActionId));
     });
-    this.els['fire-btn'].addEventListener('click', () => handlers.onAddLog());
     this.els['sound-btn'].addEventListener('click', () => handlers.onSound());
-    this.els['sauna-exit'].addEventListener('click', () => handlers.onExitSauna());
     this.els['help-btn'].addEventListener('click', () => this.showHelp(true));
     this.els['help-close'].addEventListener('click', () => this.showHelp(false));
     this.els['help'].addEventListener('click', e => { if (e.target === this.els['help']) this.showHelp(false); });
-
-    setInterval(() => { if (this.lastFire) this.setFire(this.lastFire); }, 15000);
-  }
-
-  get helpOpen() { return !this.els['help'].hidden; }
-  showHelp(open: boolean) { this.els['help'].hidden = !open; }
-
-  setPresence(n: number) { this.els['presence'].textContent = `함께 ${n}명`; }
-
-  setFire(s: FireState) {
-    this.lastFire = s;
-    const fire = this.els['fire'];
-    const title = this.els['fire-title'];
-    const sub = this.els['fire-sub'];
-    const btn = this.els['fire-btn'] as HTMLButtonElement;
-    (this.els['fuel-bar']).style.width = `${Math.round(s.fuel * 100)}%`;
-    fire.classList.toggle('is-out', s.litAt === null);
-    fire.classList.toggle('is-low', s.litAt !== null && s.fuel < 0.25);
-    if (s.litAt === null) {
-      title.textContent = '불이 꺼졌어요';
-      sub.textContent = s.logs > 0 ? `장작 ${s.logs}개까지 버텼어요 · 다시 지펴주세요` : '아무도 지키지 못했어요 · 다시 지펴주세요';
-      btn.textContent = '다시 지피기';
-    } else {
-      title.textContent = `불가마 불 · ${formatSince(s.litAt)} 타오르는 중`;
-      const minLeft = Math.max(1, Math.ceil((s.fuel * this.burnMs) / 60000));
-      sub.textContent = s.fuel < 0.25
-        ? `${minLeft}분 뒤 꺼져요 · 장작을 넣어주세요`
-        : `장작 ${Math.round(s.fuel * 100)}% · 지금까지 ${s.logs}개 넣었어요`;
-      btn.textContent = '장작 넣기';
-    }
-  }
-
-  setSauna(visible: boolean, sec = 0, heat = 0) {
-    const el = this.els['sauna'];
-    el.hidden = !visible;
-    if (!visible) return;
-    const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
-    this.els['sauna-time'].textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-    this.els['heat-bar'].style.width = `${Math.round(Math.min(1, heat) * 100)}%`;
-  }
-
-  setActive(id: ActionId | null) {
-    this.root.querySelectorAll<HTMLButtonElement>('[data-action]').forEach(b => {
-      b.classList.toggle('is-active', b.dataset.action === id);
+    this.els['rooms-close'].addEventListener('click', () => this.showRooms(false));
+    this.els['rooms'].addEventListener('click', e => { if (e.target === this.els['rooms']) this.showRooms(false); });
+    this.els['rooms-list'].addEventListener('click', e => {
+      const card = (e.target as HTMLElement).closest<HTMLElement>('[data-room]');
+      if (!card) return;
+      this.showRooms(false);
+      handlers.onGoRoom(card.dataset.room as RoomId);
     });
   }
 
-  setTowelState(on: boolean) {
-    const b = this.root.querySelector<HTMLButtonElement>('[data-action="towel"]')!;
-    b.classList.toggle('is-active', on);
+  get modalOpen() { return !this.els['help'].hidden || !this.els['rooms'].hidden; }
+  showHelp(open: boolean) { this.els['help'].hidden = !open; }
+  showRooms(open: boolean) { this.els['rooms'].hidden = !open; }
+  closeModals() { this.showHelp(false); this.showRooms(false); }
+
+  setPresence(n: number) { this.els['presence'].textContent = `함께 ${n}명`; }
+
+  setLocation(theme: RoomTheme | null) {
+    this.els['where'].classList.toggle('in-room', !!theme);
+    this.els['where-name'].textContent = theme ? theme.name : '광장';
+    this.els['where-sub'].textContent = theme ? '벽의 QR을 찍으면 이번 주 파티가 보여요' : '방 목록에서 가고 싶은 파티를 골라요';
+  }
+
+  setRooms(cards: RoomCard[]) {
+    this.els['rooms-list'].innerHTML = cards.map(c => `
+      <button class="room-card" data-room="${c.theme.id}" style="--room:${'#' + c.theme.light.toString(16).padStart(6, '0')}">
+        <span class="room-dot"></span>
+        <span class="room-text"><strong>${c.theme.name}</strong><small>${c.theme.tagline}</small></span>
+        <span class="room-count">${c.count}명</span>
+      </button>`).join('');
+  }
+
+  setSeated(seated: boolean) {
+    const b = this.root.querySelector<HTMLButtonElement>('[data-action="sit"]')!;
+    b.querySelector('span')!.textContent = seated ? '일어나기' : '앉기';
+    b.classList.toggle('is-active', seated);
   }
 
   setSound(on: boolean) {
@@ -157,14 +130,7 @@ export class Hud {
     b.setAttribute('aria-label', on ? '소리 끄기' : '소리 켜기');
   }
 
-  setStats(st: Stats) {
-    const min = Math.floor(st.saunaSec / 60);
-    this.els['st-sauna'].textContent = min >= 60 ? `${Math.floor(min / 60)}시간 ${min % 60}분` : `${min}분`;
-    this.els['st-egg'].textContent = String(st.eggs);
-    this.els['st-log'].textContent = String(st.logs);
-  }
-
-  toast(msg: string, ms = 2600) {
+  toast(msg: string, ms = 2800) {
     const t = this.els['toast'];
     t.textContent = msg;
     t.hidden = false;
