@@ -31,6 +31,8 @@ export class Game {
   private zone: RoomId | null = null;
   private keyWalking = false;
   private cheersTimer = 0;
+  private stall = 0;
+  private lastDist = Infinity;
   /** 방에 들어갈 때 카메라를 당기는 목표 거리. null이면 사용자가 조절한 대로 둔다 */
   private zoomTo: number | null = null;
   private occludeRay = new THREE.Ray();
@@ -104,7 +106,9 @@ export class Game {
     if (this.hud.modalOpen) return;
     const target = p.clone();
     target.y = 0;
-    this.pushOutOfObstacles(target, 0.2);
+    // 걷는 중 밀려나는 반경보다 넉넉히 보정해야 목표에 도착할 수 있다
+    this.pushOutOfObstacles(target, PLAYER_RADIUS + 0.06);
+    this.pushOutOfWalls(target, PLAYER_RADIUS + 0.06);
     this.task = null;
     this.standUp();
     this.player.walkTo(this.pathTo(target));
@@ -357,10 +361,25 @@ export class Game {
       if (this.player.pose === 'walk') this.player.setPose('idle');
     }
 
-    const arrived = this.player.update(dt);
-    if (this.player.pose !== 'sit') {
+    let arrived = this.player.update(dt);
+    // 의자는 테이블·벤치의 충돌 반경 안에 있으므로 마지막 구간에서는 밀어내지 않는다
+    const seating = this.task?.kind === 'sit' && this.player.path.length === 1;
+    if (this.player.pose !== 'sit' && !seating) {
       this.pushOutOfObstacles(this.player.group.position, PLAYER_RADIUS);
       this.pushOutOfWalls(this.player.group.position, PLAYER_RADIUS);
+    }
+    // 밀려나서 제자리걸음이면 도착으로 본다
+    if (this.player.moving) {
+      const d = this.player.group.position.distanceTo(this.player.path[0]);
+      this.stall = d < this.lastDist - 0.001 ? 0 : this.stall + dt;
+      this.lastDist = d;
+      if (this.stall > 0.8) {
+        this.stall = 0;
+        this.player.path.shift();
+        if (!this.player.moving) { this.player.stop(); arrived = true; }
+      }
+    } else {
+      this.stall = 0; this.lastDist = Infinity;
     }
     if (arrived) this.onArrive();
 
