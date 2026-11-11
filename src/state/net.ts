@@ -45,7 +45,8 @@ export interface Net {
   close(): void;
 }
 
-const CHANNEL = 'parting-lounge';
+/** 점검용 빌드는 VITE_LOUNGE_CHANNEL로 다른 채널을 써서 운영 라운지와 섞이지 않게 한다 */
+const CHANNEL = (import.meta.env.VITE_LOUNGE_CHANNEL as string | undefined) || 'parting-lounge';
 
 class BroadcastNet implements Net {
   readonly kind = 'local' as const;
@@ -89,6 +90,7 @@ class SupabaseNet implements Net {
   private handlers: ((m: Msg) => void)[] = [];
   private id = '';
   private known = new Set<string>();
+  private pending: Msg[] = [];
 
   constructor(private client: SupabaseClient) {}
 
@@ -99,11 +101,6 @@ class SupabaseNet implements Net {
       this.channel
         .on('broadcast', { event: 'msg' }, ({ payload }) => this.emit(payload as Msg))
         .on('presence', { event: 'sync' }, () => this.syncPresence())
-        .on('presence', { event: 'leave' }, ({ key }) => {
-          if (key === this.id) return;
-          this.known.delete(key);
-          this.emit({ t: 'bye', id: key });
-        })
         .subscribe(async (status, err) => {
           if (status === 'SUBSCRIBED') {
             await this.channel.track(state);
@@ -117,24 +114,41 @@ class SupabaseNet implements Net {
 
   send(m: Msg) { void this.channel.send({ type: 'broadcast', event: 'msg', payload: m }); }
   track(s: PeerState) { void this.channel.track(s); }
-  onMessage(cb: (m: Msg) => void) { this.handlers.push(cb); }
+  onMessage(cb: (m: Msg) => void) {
+    this.handlers.push(cb);
+    const queued = this.pending; this.pending = [];
+    queued.forEach(m => cb(m));
+  }
   close() { void this.client.removeChannel(this.channel); }
 
-  /** Presence 상태 전체를 훑어 새 사람은 hello, 아는 사람은 state로 올린다 */
+  /**
+   * Presence 상태 전체를 훑어 새 사람은 hello, 아는 사람은 state, 사라진 사람은 bye로 올린다.
+   * 상태를 갱신(track)하면 같은 사람의 leave와 join이 연달아 오므로 leave 이벤트는 믿지 않고
+   * 동기화된 목록에 실제로 없을 때만 나간 것으로 본다.
+   */
   private syncPresence() {
     const all = this.channel.presenceState<PeerState & { presence_ref: string }>();
+    const present = new Set<string>();
     for (const [key, list] of Object.entries(all)) {
       if (key === this.id || !list.length) continue;
+      present.add(key);
       const { presence_ref: _ref, ...state } = list[list.length - 1];
       const fresh = !this.known.has(key);
       this.known.add(key);
       this.emit({ t: fresh ? 'hello' : 'state', id: key, state: state as PeerState });
+    }
+    for (const key of [...this.known]) {
+      if (present.has(key)) continue;
+      this.known.delete(key);
+      this.emit({ t: 'bye', id: key });
     }
   }
 
   private emit(m: Msg) {
     if (!m || typeof m !== 'object' || typeof m.id !== 'string' || m.id === this.id) return;
     if ((m.t === 'hello' || m.t === 'state') && !sanitizeState(m.state)) return;
+    // 게임이 수신 준비를 마치기 전에 온 메시지는 모아 두었다가 넘긴다
+    if (!this.handlers.length) { this.pending.push(m); return; }
     this.handlers.forEach(h => h(m));
   }
 }

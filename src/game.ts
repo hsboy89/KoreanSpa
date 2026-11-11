@@ -159,9 +159,8 @@ export class Game {
   }
 
   private onNet(m: Msg) {
+    // 늦게 들어온 사람은 Presence 스냅샷으로 내 상태를 받으므로 여기서 다시 보낼 필요가 없다
     this.peers.apply(m, performance.now());
-    // 늦게 들어온 사람이 나를 볼 수 있게 내 상태를 알린다
-    if (m.t === 'hello' && this.net?.kind === 'supabase') this.track();
   }
 
   private refreshPresence() {
@@ -491,11 +490,16 @@ export class Game {
     } else {
       this.stall = 0; this.lastDist = Infinity;
     }
-    if (arrived) this.onArrive();
+    if (arrived) {
+      this.onArrive();
+      // 멈춘 위치를 스냅샷에 남겨 늦게 들어온 사람도 제자리에서 보게 한다
+      if (!this.mySeat) this.track();
+    }
 
     const zone = this.zoneOf(this.player.group.position);
     if (zone !== this.zone) this.onZoneChange(zone);
-    if (this.net && now - this.lastTrack > TRACK_MS) this.track();
+    // 로컬 모드는 주기적 신호로 살아 있음을 알린다. 서버 모드는 Presence가 대신한다
+    if (this.net?.kind === 'local' && now - this.lastTrack > TRACK_MS) this.track();
 
     this.updateBots(dt);
     this.peers.update(dt, now, this.net?.kind === 'local' ? LOCAL_EXPIRE_MS : null);
