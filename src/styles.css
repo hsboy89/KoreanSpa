@@ -108,3 +108,18 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--brand); outline
 .say-list button:hover { border-color: var(--brand); background: var(--brand-soft); }
 .say-emoji { margin-top: 10px; }
 .say-emoji button { font-size: 20px; padding: 6px 11px; line-height: 1; }
+
+/* 라운지 선택 */
+button.brand { text-align: left; cursor: pointer; }
+.brand-text { display: block; }
+.brand-caret { color: var(--muted); font-size: 12px; margin-left: 2px; }
+.brand-caret[hidden] { display: none; }
+.lounge-list { display: grid; gap: 8px; margin-top: 14px; }
+.lounge-row { display: flex; align-items: center; gap: 10px; padding: 13px 14px; border-radius: 14px; background: #fff; border: 1px solid rgba(0, 0, 0, .07); text-align: left; transition: border-color .2s, background .2s; }
+.lounge-row:hover:not(:disabled) { border-color: var(--brand); background: var(--brand-soft); }
+.lounge-row:disabled { opacity: .55; cursor: default; }
+.lounge-row.is-current { border-color: var(--brand); }
+.lounge-row strong { font-size: 14px; font-weight: 700; }
+.lounge-badge { font-size: 10.5px; font-weight: 700; color: #fff; background: var(--brand); padding: 2px 8px; border-radius: 999px; }
+.lounge-badge[hidden] { display: none; }
+.lounge-count { margin-left: auto; font-size: 12.5px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }

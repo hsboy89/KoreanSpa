@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { buildWorld, type Seat, type World } from './scene/world';
-import { Avatar, cupProp, randomOutfit } from './scene/avatar';
+import { Avatar, cupProp, randomOutfit, type Outfit } from './scene/avatar';
 import { Controls } from './scene/controls';
 import { Peers } from './scene/peers';
 import { Hud, type ActionId } from './ui/hud';
 import { Overlay, type OverlayEntry } from './ui/overlay';
 import { inRect, PLAZA, ROOM_LAYOUTS, ROOM_THEMES, type RoomId } from './scene/rooms';
 import { isSayable, mockPeers, randomName, type Peer } from './state/presence';
-import { connectNet, type Msg, type Net, type PeerState, type XZ } from './state/net';
+import { connectNet, LOUNGE_CAPACITY, LOUNGE_COUNT, type Msg, type Net, type PeerState, type XZ } from './state/net';
 import { Ambient } from './audio/ambient';
 
 type Task = { kind: 'sit'; seat: Seat } | { kind: 'enter'; room: RoomId };
@@ -15,6 +15,19 @@ type Task = { kind: 'sit'; seat: Seat } | { kind: 'enter'; room: RoomId };
 interface Bot { peer: Peer; avatar: Avatar; nextWander: number; seat: Seat | null }
 
 export interface ConnectInfo { kind: 'supabase' | 'local'; offline: boolean; full: boolean; lounge: number }
+
+const IDENTITY_KEY = 'parting.me';
+
+/** 새로고침이나 라운지 이동 뒤에도 같은 이름과 옷으로 보이게 탭 단위로 기억한다 */
+function loadIdentity(): { name: string; outfit: Outfit } {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(IDENTITY_KEY) ?? 'null');
+    if (saved && typeof saved.name === 'string' && saved.outfit && typeof saved.outfit.top === 'number') return saved;
+  } catch { /* 저장소를 못 쓰는 환경 */ }
+  const me = { name: randomName(), outfit: randomOutfit() };
+  try { sessionStorage.setItem(IDENTITY_KEY, JSON.stringify(me)); } catch { /* ignore */ }
+  return me;
+}
 
 /** 유니온의 각 멤버에서 id를 뺀 타입 (Omit은 유니온을 합쳐 버린다) */
 type MsgBody = Msg extends infer M ? (M extends Msg ? Omit<M, 'id'> : never) : never;
@@ -84,7 +97,8 @@ export class Game {
 
     this.world = buildWorld(this.scene);
 
-    this.player = new Avatar(randomName(), randomOutfit());
+    const me = loadIdentity();
+    this.player = new Avatar(me.name, me.outfit);
     this.player.group.position.copy(this.world.spawn);
     this.player.faceYaw(Math.PI);
     this.scene.add(this.player.group);
@@ -102,6 +116,8 @@ export class Game {
       onGoRoom: id => this.goRoom(id),
       onSay: text => this.say(text),
       onSound: () => this.toggleSound(),
+      onOpenLounges: () => void this.openLounges(),
+      onPickLounge: n => this.pickLounge(n),
     });
     this.hud.setLocation(null);
     this.refreshPresence();
@@ -122,7 +138,7 @@ export class Game {
     window.addEventListener('pagehide', () => net.close());
     // 봇은 서버 설정이 아예 없는 개발 환경에서만 보여준다
     if (net.kind === 'local' && !offline && !full) this.spawnBots(mockPeers());
-    this.hud.setLounge(lounge);
+    this.hud.setLounge(lounge, LOUNGE_CAPACITY);
     this.refreshPresence();
     return { kind: net.kind, offline, full, lounge };
   }
@@ -164,6 +180,25 @@ export class Game {
   private onNet(m: Msg) {
     // 늦게 들어온 사람은 Presence 스냅샷으로 내 상태를 받으므로 여기서 다시 보낼 필요가 없다
     this.peers.apply(m, performance.now());
+  }
+
+  private async openLounges() {
+    const net = this.net;
+    if (!net || !net.lounge) { this.hud.toast('지금은 라운지에 연결돼 있지 않아요.'); return; }
+    this.hud.setLounges(null, net.lounge, LOUNGE_CAPACITY, LOUNGE_COUNT);
+    this.hud.showLounges(true);
+    const counts = await net.loungeCounts();
+    this.hud.setLounges(counts, net.lounge, LOUNGE_CAPACITY, LOUNGE_COUNT);
+  }
+
+  /** 다른 라운지로 옮긴다. 주소에 번호를 실어 다시 들어가는 방식이고 이름과 옷은 그대로 유지된다 */
+  private pickLounge(n: number) {
+    this.hud.showLounges(false);
+    if (n === this.net?.lounge) return;
+    this.hud.toast(`라운지 ${n}(으)로 옮기는 중이에요.`, 6000);
+    const url = new URL(location.href);
+    url.searchParams.set('l', String(n));
+    location.href = url.toString();
   }
 
   private refreshPresence() {

@@ -43,6 +43,10 @@ export interface Net {
   track(state: PeerState): void;
   onMessage(cb: (msg: Msg) => void): void;
   close(): void;
+  /** 들어와 있는 라운지 번호. 서버에 붙지 못했으면 0 */
+  readonly lounge: number;
+  /** 라운지별 현재 인원. 확인하지 못한 곳은 -1 */
+  loungeCounts(): Promise<number[]>;
 }
 
 /** 점검용 빌드는 VITE_LOUNGE_CHANNEL로 다른 채널을 써서 운영 라운지와 섞이지 않게 한다 */
@@ -55,6 +59,8 @@ const PROBE_MS = 1200;
 
 class BroadcastNet implements Net {
   readonly kind = 'local' as const;
+  readonly lounge = 0;
+  async loungeCounts(): Promise<number[]> { return []; }
   private ch = new BroadcastChannel(CHANNEL);
   private handlers: ((m: Msg) => void)[] = [];
   private id = '';
@@ -150,6 +156,31 @@ class SupabaseNet implements Net {
     queued.forEach(m => cb(m));
   }
   close() { if (this.channel) void this.client.removeChannel(this.channel); }
+
+  async loungeCounts() {
+    const own = Object.keys(this.channel.presenceState()).length;
+    return Promise.all(Array.from({ length: LOUNGE_COUNT }, (_, i) => i + 1).map(n => (n === this.lounge ? own : this.peek(n))));
+  }
+
+  /** 들어가지 않고 다른 라운지의 인원만 잠깐 들여다본다 */
+  private peek(n: number) {
+    return new Promise<number>(resolve => {
+      const ch = this.client.channel(`${CHANNEL}-${n}`);
+      let done = false;
+      const finish = async () => {
+        if (done) return;
+        done = true;
+        const count = Object.keys(ch.presenceState()).length;
+        await this.client.removeChannel(ch);
+        resolve(count);
+      };
+      ch.on('presence', { event: 'sync' }, () => { if (Object.keys(ch.presenceState()).length) void finish(); })
+        .subscribe(status => {
+          if (status === 'SUBSCRIBED') setTimeout(() => void finish(), PROBE_MS);
+          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') { done = true; resolve(-1); }
+        });
+    });
+  }
 
   /**
    * Presence 상태 전체를 훑어 새 사람은 hello, 아는 사람은 state, 사라진 사람은 bye로 올린다.

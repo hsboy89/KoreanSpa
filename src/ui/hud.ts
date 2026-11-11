@@ -8,6 +8,8 @@ export interface HudHandlers {
   onGoRoom(id: RoomId): void;
   onSay(text: string): void;
   onSound(): void;
+  onOpenLounges(): void;
+  onPickLounge(n: number): void;
 }
 
 export interface RoomCard { theme: RoomTheme; count: number }
@@ -44,10 +46,11 @@ export class Hud {
     this.root.className = 'hud';
     this.root.innerHTML = `
       <header class="hud-top">
-        <div class="panel brand">
+        <button class="panel brand" id="brand" aria-label="라운지 선택">
           <span class="brand-mark">${LOGO}</span>
-          <div><strong>파팅</strong><small id="presence">함께 1명</small></div>
-        </div>
+          <span class="brand-text"><strong>파팅</strong><small id="presence">함께 1명</small></span>
+          <span class="brand-caret" id="brand-caret" hidden>▾</span>
+        </button>
         <section class="panel where" id="where" aria-live="polite">
           <span class="where-icon">${svg(ICON.pin)}</span>
           <div class="where-text"><strong id="where-name">광장</strong><small id="where-sub">방 목록에서 가고 싶은 파티를 골라요</small></div>
@@ -69,6 +72,13 @@ export class Hud {
           <div id="rooms-list" class="rooms-list"></div>
         </div>
       </div>
+      <div id="lounges" class="modal" hidden>
+        <div class="panel modal-card" role="dialog" aria-modal="true" aria-labelledby="lounges-title">
+          <div class="modal-head"><h2 id="lounges-title">라운지 선택</h2><button id="lounges-close" class="icon-btn" aria-label="닫기">✕</button></div>
+          <p>표시된 인원은 지금 들어와 있는 실제 사람 수예요.</p>
+          <div id="lounges-list" class="lounge-list"></div>
+        </div>
+      </div>
       <div id="say" class="modal" hidden>
         <div class="panel modal-card" role="dialog" aria-modal="true" aria-labelledby="say-title">
           <div class="modal-head"><h2 id="say-title">한마디</h2><button id="say-close" class="icon-btn" aria-label="닫기">✕</button></div>
@@ -87,7 +97,7 @@ export class Hud {
       </div>`;
     parent.appendChild(this.root);
 
-    for (const id of ['presence', 'where', 'where-name', 'where-sub', 'where-link', 'sound-btn', 'help-btn', 'toast', 'rooms', 'rooms-list', 'rooms-close', 'say', 'say-close', 'help', 'help-close']) {
+    for (const id of ['presence', 'where', 'where-name', 'where-sub', 'where-link', 'sound-btn', 'help-btn', 'toast', 'rooms', 'rooms-list', 'rooms-close', 'say', 'say-close', 'help', 'help-close', 'brand', 'brand-caret', 'lounges', 'lounges-list', 'lounges-close']) {
       this.els[id] = this.root.querySelector<HTMLElement>(`#${id}`)!;
     }
 
@@ -106,6 +116,14 @@ export class Hud {
       this.showRooms(false);
       handlers.onGoRoom(card.dataset.room as RoomId);
     });
+    this.els['brand'].addEventListener('click', () => handlers.onOpenLounges());
+    this.els['lounges-close'].addEventListener('click', () => this.showLounges(false));
+    this.els['lounges'].addEventListener('click', e => {
+      if (e.target === this.els['lounges']) { this.showLounges(false); return; }
+      const row = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-lounge]');
+      if (!row || row.disabled) return;
+      handlers.onPickLounge(Number(row.dataset.lounge));
+    });
     this.els['say-close'].addEventListener('click', () => this.showSay(false));
     this.els['say'].addEventListener('click', e => {
       if (e.target === this.els['say']) { this.showSay(false); return; }
@@ -116,18 +134,50 @@ export class Hud {
     });
   }
 
-  get modalOpen() { return !this.els['help'].hidden || !this.els['rooms'].hidden || !this.els['say'].hidden; }
+  get modalOpen() { return !this.els['help'].hidden || !this.els['rooms'].hidden || !this.els['say'].hidden || !this.els['lounges'].hidden; }
+  showLounges(open: boolean) { this.els['lounges'].hidden = !open; }
+
+  /** counts가 null이면 확인 중 표시. 인원 -1은 확인하지 못한 라운지 */
+  setLounges(counts: number[] | null, current: number, capacity: number, total: number) {
+    const list = this.els['lounges-list'];
+    list.textContent = '';
+    for (let n = 1; n <= total; n++) {
+      const count = counts ? counts[n - 1] : null;
+      const mine = n === current;
+      const full = count !== null && count >= capacity && !mine;
+      const row = document.createElement('button');
+      row.className = 'lounge-row' + (mine ? ' is-current' : '');
+      row.dataset.lounge = String(n);
+      row.disabled = full || count === null;
+      const name = document.createElement('strong');
+      name.textContent = `라운지 ${n}`;
+      const badge = document.createElement('span');
+      badge.className = 'lounge-badge';
+      badge.textContent = mine ? '현재' : full ? '만석' : '';
+      badge.hidden = !badge.textContent;
+      const num = document.createElement('span');
+      num.className = 'lounge-count';
+      num.textContent = count === null ? '확인 중…' : count < 0 ? '확인 불가' : `${count} / ${capacity}명`;
+      row.append(name, badge, num);
+      list.appendChild(row);
+    }
+  }
   showHelp(open: boolean) { this.els['help'].hidden = !open; }
   showRooms(open: boolean) { this.els['rooms'].hidden = !open; }
   showSay(open: boolean) { this.els['say'].hidden = !open; }
-  closeModals() { this.showHelp(false); this.showRooms(false); this.showSay(false); }
+  closeModals() { this.showHelp(false); this.showRooms(false); this.showSay(false); this.showLounges(false); }
 
   private lounge = 0;
+  private capacity = 0;
   private presenceCount = 1;
-  setLounge(n: number) { this.lounge = n; this.setPresence(this.presenceCount); }
+  setLounge(n: number, capacity: number) {
+    this.lounge = n; this.capacity = capacity;
+    this.els['brand-caret'].hidden = !n;
+    this.setPresence(this.presenceCount);
+  }
   setPresence(n: number) {
     this.presenceCount = n;
-    this.els['presence'].textContent = this.lounge ? `라운지 ${this.lounge} · 함께 ${n}명` : `함께 ${n}명`;
+    this.els['presence'].textContent = this.lounge ? `라운지 ${this.lounge} · ${n} / ${this.capacity}명` : `함께 ${n}명`;
   }
 
   setLocation(theme: RoomTheme | null) {
