@@ -14,7 +14,7 @@ type Task = { kind: 'sit'; seat: Seat } | { kind: 'enter'; room: RoomId };
 
 interface Bot { peer: Peer; avatar: Avatar; nextWander: number; seat: Seat | null }
 
-export interface ConnectInfo { kind: 'supabase' | 'local'; offline: boolean }
+export interface ConnectInfo { kind: 'supabase' | 'local'; offline: boolean; full: boolean; lounge: number }
 
 /** 유니온의 각 멤버에서 id를 뺀 타입 (Omit은 유니온을 합쳐 버린다) */
 type MsgBody = Msg extends infer M ? (M extends Msg ? Omit<M, 'id'> : never) : never;
@@ -116,17 +116,20 @@ export class Game {
 
   /** 실시간 서버에 붙는다. 서버가 없으면 같은 기기 탭끼리만 보이는 로컬 모드 + 연습용 봇 */
   async connect(): Promise<ConnectInfo> {
-    const { net, offline } = await connectNet(this.myId, this.myState());
+    const { net, offline, full, lounge } = await connectNet(this.myId, this.myState());
     this.net = net;
     net.onMessage(m => this.onNet(m));
     window.addEventListener('pagehide', () => net.close());
-    if (net.kind === 'local') this.spawnBots(mockPeers());
+    // 봇은 서버 설정이 아예 없는 개발 환경에서만 보여준다
+    if (net.kind === 'local' && !offline && !full) this.spawnBots(mockPeers());
+    this.hud.setLounge(lounge);
     this.refreshPresence();
-    return { kind: net.kind, offline };
+    return { kind: net.kind, offline, full, lounge };
   }
 
   start(info: ConnectInfo) {
-    if (info.offline) this.hud.toast('서버에 연결하지 못했어요. 지금은 이 기기의 다른 창만 보여요.', 6000);
+    if (info.full) this.hud.toast('지금은 라운지가 모두 찼어요. 혼자 둘러볼 수 있고, 잠시 뒤 다시 들어오면 자리가 날 거예요.', 8000);
+    else if (info.offline) this.hud.toast('서버에 연결하지 못했어요. 지금은 이 기기의 다른 창만 보여요.', 6000);
     else if (info.kind === 'local') this.hud.toast(`${this.player.name}님, 연습 모드예요. 서버 설정이 없어 같은 기기의 다른 창만 서로 보여요.`, 5000);
     else this.hud.toast(`${this.player.name}님, 파팅 라운지에 오셨어요. 끌리는 방으로 가볼까요?`, 4000);
     this.renderer.setAnimationLoop(() => this.frame());

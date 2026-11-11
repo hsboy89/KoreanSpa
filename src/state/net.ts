@@ -48,6 +48,11 @@ export interface Net {
 /** 점검용 빌드는 VITE_LOUNGE_CHANNEL로 다른 채널을 써서 운영 라운지와 섞이지 않게 한다 */
 const CHANNEL = (import.meta.env.VITE_LOUNGE_CHANNEL as string | undefined) || 'parting-lounge';
 
+/** 라운지 하나의 정원과 라운지 수. 합계가 Supabase 요금제의 동시 접속 한도를 넘지 않게 맞춘다 (무료 200) */
+export const LOUNGE_CAPACITY = Number(import.meta.env.VITE_LOUNGE_CAPACITY) || 50;
+export const LOUNGE_COUNT = 4;
+const PROBE_MS = 1200;
+
 class BroadcastNet implements Net {
   readonly kind = 'local' as const;
   private ch = new BroadcastChannel(CHANNEL);
@@ -94,20 +99,45 @@ class SupabaseNet implements Net {
 
   constructor(private client: SupabaseClient) {}
 
-  connect(id: string, state: PeerState) {
+  /** 들어간 라운지 번호(1부터). 모든 라운지가 찼으면 0 */
+  lounge = 0;
+
+  /** 선호 라운지부터 차례로 들여다보고 정원이 남은 첫 라운지에 들어간다 */
+  async connect(id: string, state: PeerState, preferred = 1) {
     this.id = id;
-    return new Promise<void>((resolve, reject) => {
-      this.channel = this.client.channel(CHANNEL, { config: { broadcast: { self: false }, presence: { key: id } } });
-      this.channel
+    const order = [preferred, ...Array.from({ length: LOUNGE_COUNT }, (_, i) => i + 1).filter(n => n !== preferred)];
+    for (const n of order) {
+      if (await this.join(n, state)) { this.lounge = n; return; }
+    }
+  }
+
+  private join(n: number, state: PeerState) {
+    return new Promise<boolean>((resolve, reject) => {
+      let decided = false;
+      const channel = this.client.channel(`${CHANNEL}-${n}`, { config: { broadcast: { self: false }, presence: { key: this.id } } });
+      this.channel = channel;
+      // 접속 직후의 첫 동기화는 비어 있을 수 있다. 정원이 찬 게 보이면 바로 물러나고,
+      // 그렇지 않으면 잠깐 기다린 뒤의 인원으로 들어갈지 정한다
+      const decide = async (final: boolean) => {
+        if (decided) return;
+        const others = Object.keys(channel.presenceState()).filter(k => k !== this.id).length;
+        if (!final && others < LOUNGE_CAPACITY) return;
+        decided = true;
+        if (others >= LOUNGE_CAPACITY) {
+          this.known.clear(); this.pending = [];
+          await this.client.removeChannel(channel);
+          resolve(false);
+          return;
+        }
+        await channel.track(state);
+        resolve(true);
+      };
+      channel
         .on('broadcast', { event: 'msg' }, ({ payload }) => this.emit(payload as Msg))
-        .on('presence', { event: 'sync' }, () => this.syncPresence())
-        .subscribe(async (status, err) => {
-          if (status === 'SUBSCRIBED') {
-            await this.channel.track(state);
-            resolve();
-          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-            reject(err ?? new Error(status));
-          }
+        .on('presence', { event: 'sync' }, () => { this.syncPresence(); void decide(false); })
+        .subscribe((status, err) => {
+          if (status === 'SUBSCRIBED') setTimeout(() => void decide(true), PROBE_MS);
+          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') reject(err ?? new Error(status));
         });
     });
   }
@@ -119,7 +149,7 @@ class SupabaseNet implements Net {
     const queued = this.pending; this.pending = [];
     queued.forEach(m => cb(m));
   }
-  close() { void this.client.removeChannel(this.channel); }
+  close() { if (this.channel) void this.client.removeChannel(this.channel); }
 
   /**
    * Presence 상태 전체를 훑어 새 사람은 hello, 아는 사람은 state, 사라진 사람은 bye로 올린다.
@@ -153,24 +183,41 @@ class SupabaseNet implements Net {
   }
 }
 
-export interface Connection { net: Net; /** 서버가 설정돼 있는데 연결에 실패했으면 true */ offline: boolean }
+export interface Connection {
+  net: Net;
+  /** 서버가 설정돼 있는데 연결에 실패했으면 true */
+  offline: boolean;
+  /** 모든 라운지가 정원이라 들어가지 못했으면 true */
+  full: boolean;
+  /** 들어간 라운지 번호. 서버에 붙지 못했으면 0 */
+  lounge: number;
+}
+
+/** 주소의 ?l=2 로 들어갈 라운지를 고를 수 있다. 친구와 같은 라운지에서 만날 때 쓴다 */
+function preferredLounge(): number {
+  const n = Number(new URLSearchParams(location.search).get('l'));
+  return Number.isInteger(n) && n >= 1 && n <= LOUNGE_COUNT ? n : 1;
+}
 
 export async function connectNet(id: string, state: PeerState): Promise<Connection> {
   const client = getSupabase();
+  let offline = false, full = false;
   if (client) {
     const net = new SupabaseNet(client);
     try {
       await Promise.race([
-        net.connect(id, state),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('시간 초과')), CONNECT_TIMEOUT_MS)),
+        net.connect(id, state, preferredLounge()),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('시간 초과')), CONNECT_TIMEOUT_MS + LOUNGE_COUNT * PROBE_MS)),
       ]);
-      return { net, offline: false };
+      if (net.lounge) return { net, offline: false, full: false, lounge: net.lounge };
+      full = true;
     } catch (err) {
       console.error('실시간 연결 실패. Supabase Realtime 설정을 확인하세요.', err);
       net.close();
+      offline = true;
     }
   }
   const local = new BroadcastNet();
   await local.connect(id, state);
-  return { net: local, offline: !!client };
+  return { net: local, offline, full, lounge: 0 };
 }

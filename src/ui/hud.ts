@@ -122,7 +122,13 @@ export class Hud {
   showSay(open: boolean) { this.els['say'].hidden = !open; }
   closeModals() { this.showHelp(false); this.showRooms(false); this.showSay(false); }
 
-  setPresence(n: number) { this.els['presence'].textContent = `함께 ${n}명`; }
+  private lounge = 0;
+  private presenceCount = 1;
+  setLounge(n: number) { this.lounge = n; this.setPresence(this.presenceCount); }
+  setPresence(n: number) {
+    this.presenceCount = n;
+    this.els['presence'].textContent = this.lounge ? `라운지 ${this.lounge} · 함께 ${n}명` : `함께 ${n}명`;
+  }
 
   setLocation(theme: RoomTheme | null) {
     this.els['where'].classList.toggle('in-room', !!theme);
