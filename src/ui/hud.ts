@@ -1,10 +1,12 @@
 import { PARTING_URL, type RoomId, type RoomTheme } from '../scene/rooms';
+import { EMOJIS, PHRASES } from '../state/presence';
 
-export type ActionId = 'rooms' | 'sit' | 'wave' | 'cheers';
+export type ActionId = 'rooms' | 'sit' | 'wave' | 'cheers' | 'say';
 
 export interface HudHandlers {
   onAction(id: ActionId): void;
   onGoRoom(id: RoomId): void;
+  onSay(text: string): void;
   onSound(): void;
 }
 
@@ -17,6 +19,7 @@ const ICON = {
   sit: '<path d="M6 11V5a2 2 0 0 1 2-2h5a2 2 0 0 1 2 2v6"/><path d="M4 11h14a2 2 0 0 1 2 2v3H4a2 2 0 0 1-2-2v-1a2 2 0 0 1 2-2z"/><path d="M5 16v5M19 16v5"/>',
   wave: '<path d="M7 11V6.5a1.5 1.5 0 0 1 3 0V11"/><path d="M10 10V4.5a1.5 1.5 0 0 1 3 0V10"/><path d="M13 10V5.5a1.5 1.5 0 0 1 3 0V12"/><path d="M16 12v-1.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-1a6 6 0 0 1-5.2-3L4 13.5a1.6 1.6 0 0 1 2.8-1.6L8 13.5"/>',
   cheers: '<path d="M8 3h5l-1 8a2.5 2.5 0 0 1-2.5 2.3A2.5 2.5 0 0 1 7 11z"/><path d="M9.5 13.5V20M7 20h5"/><path d="M15 6l4-1.5 1 5.5a2.5 2.5 0 0 1-2 2.9 2.5 2.5 0 0 1-2.8-1.6z"/><path d="M17.5 13.5l1.2 5.7M16 20.2l4.5-1"/>',
+  say: '<path d="M4 6a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H10l-5 4v-4a3 3 0 0 1-1-2.2z"/><path d="M8 8h8M8 11.5h5"/>',
   sound: '<path d="M4 10v4h3l4 3V7L7 10z"/><path d="M15 9a3.5 3.5 0 0 1 0 6"/><path d="M17.5 6.5a7 7 0 0 1 0 11"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .8-1 1.7"/><path d="M12 17h.01"/>',
   pin: '<path d="M12 21s6-5.3 6-11a6 6 0 0 0-12 0c0 5.7 6 11 6 11z"/><circle cx="12" cy="10" r="2.2"/>',
@@ -28,6 +31,7 @@ const ACTIONS: { id: ActionId; label: string; key: string; icon: string }[] = [
   { id: 'sit', label: '앉기', key: '2', icon: ICON.sit },
   { id: 'wave', label: '손 흔들기', key: '3', icon: ICON.wave },
   { id: 'cheers', label: '건배', key: '4', icon: ICON.cheers },
+  { id: 'say', label: '말하기', key: '5', icon: ICON.say },
 ];
 
 export class Hud {
@@ -65,17 +69,25 @@ export class Hud {
           <div id="rooms-list" class="rooms-list"></div>
         </div>
       </div>
+      <div id="say" class="modal" hidden>
+        <div class="panel modal-card" role="dialog" aria-modal="true" aria-labelledby="say-title">
+          <div class="modal-head"><h2 id="say-title">한마디</h2><button id="say-close" class="icon-btn" aria-label="닫기">✕</button></div>
+          <p>머리 위 말풍선으로 잠깐 보여요. 정해진 문구만 보낼 수 있어요.</p>
+          <div class="say-list">${PHRASES.map(p => `<button data-say="${p}">${p}</button>`).join('')}</div>
+          <div class="say-list say-emoji">${EMOJIS.map(p => `<button data-say="${p}" aria-label="${p}">${p}</button>`).join('')}</div>
+        </div>
+      </div>
       <div id="help" class="modal" hidden>
         <div class="panel modal-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
           <div class="modal-head"><h2 id="help-title">파팅 라운지</h2><button id="help-close" class="icon-btn" aria-label="닫기">✕</button></div>
-          <p>파팅의 파티 카테고리를 둘러보는 공간이에요. 채팅은 없고, 같이 있는 사람만 보여요.<br>각 방 벽에 걸린 QR을 폰으로 찍으면 파팅으로 이어져요.</p>
-          <p>바닥 클릭 · WASD · 방향키로 이동<br>드래그로 둘러보기 · 휠과 두 손가락으로 확대/축소<br>1 방 목록 · 2 앉기 · 3 손 흔들기 · 4 건배</p>
+          <p>파팅의 파티 카테고리를 둘러보는 공간이에요. 지금 들어와 있는 사람들이 그대로 보여요.<br>각 방 벽에 걸린 QR을 폰으로 찍으면 파팅으로 이어져요.</p>
+          <p>바닥 클릭 · WASD · 방향키로 이동<br>드래그로 둘러보기 · 휠과 두 손가락으로 확대/축소<br>1 방 목록 · 2 앉기 · 3 손 흔들기 · 4 건배 · 5 말하기</p>
           <div class="modal-foot"><a class="btn solid" href="${PARTING_URL}" target="_blank" rel="noopener noreferrer">parting.io 열기 ↗</a></div>
         </div>
       </div>`;
     parent.appendChild(this.root);
 
-    for (const id of ['presence', 'where', 'where-name', 'where-sub', 'where-link', 'sound-btn', 'help-btn', 'toast', 'rooms', 'rooms-list', 'rooms-close', 'help', 'help-close']) {
+    for (const id of ['presence', 'where', 'where-name', 'where-sub', 'where-link', 'sound-btn', 'help-btn', 'toast', 'rooms', 'rooms-list', 'rooms-close', 'say', 'say-close', 'help', 'help-close']) {
       this.els[id] = this.root.querySelector<HTMLElement>(`#${id}`)!;
     }
 
@@ -94,12 +106,21 @@ export class Hud {
       this.showRooms(false);
       handlers.onGoRoom(card.dataset.room as RoomId);
     });
+    this.els['say-close'].addEventListener('click', () => this.showSay(false));
+    this.els['say'].addEventListener('click', e => {
+      if (e.target === this.els['say']) { this.showSay(false); return; }
+      const b = (e.target as HTMLElement).closest<HTMLElement>('[data-say]');
+      if (!b) return;
+      this.showSay(false);
+      handlers.onSay(b.dataset.say!);
+    });
   }
 
-  get modalOpen() { return !this.els['help'].hidden || !this.els['rooms'].hidden; }
+  get modalOpen() { return !this.els['help'].hidden || !this.els['rooms'].hidden || !this.els['say'].hidden; }
   showHelp(open: boolean) { this.els['help'].hidden = !open; }
   showRooms(open: boolean) { this.els['rooms'].hidden = !open; }
-  closeModals() { this.showHelp(false); this.showRooms(false); }
+  showSay(open: boolean) { this.els['say'].hidden = !open; }
+  closeModals() { this.showHelp(false); this.showRooms(false); this.showSay(false); }
 
   setPresence(n: number) { this.els['presence'].textContent = `함께 ${n}명`; }
 
@@ -110,7 +131,14 @@ export class Hud {
   }
 
   setRooms(cards: RoomCard[]) {
-    this.els['rooms-list'].innerHTML = cards.map(c => `
+    const list = this.els['rooms-list'];
+    const existing = list.querySelectorAll<HTMLElement>('.room-card');
+    // 이미 그려져 있으면 인원 숫자만 바꾼다. 통째로 다시 그리면 누르던 카드가 사라진다
+    if (existing.length === cards.length && [...existing].every((el, i) => el.dataset.room === cards[i].theme.id)) {
+      existing.forEach((el, i) => { el.querySelector('.room-count')!.textContent = `${cards[i].count}명`; });
+      return;
+    }
+    list.innerHTML = cards.map(c => `
       <button class="room-card" data-room="${c.theme.id}" style="--room:${'#' + c.theme.light.toString(16).padStart(6, '0')}">
         <span class="room-dot"></span>
         <span class="room-text"><strong>${c.theme.name}</strong><small>${c.theme.tagline}</small></span>

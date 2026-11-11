@@ -9,9 +9,11 @@ const app = document.getElementById('app')!;
 async function main() {
   try {
     const game = new Game(app);
+    bootMsg.textContent = '같이 있는 사람을 찾는 중';
+    const info = await game.connect();
     // 폰트와 첫 프레임이 준비될 시간을 잠깐 준다
     await Promise.race([document.fonts?.ready ?? Promise.resolve(), new Promise(r => setTimeout(r, 1200))]);
-    game.start();
+    game.start(info);
     requestAnimationFrame(() => {
       boot.classList.add('is-hiding');
       setTimeout(() => boot.remove(), 700);

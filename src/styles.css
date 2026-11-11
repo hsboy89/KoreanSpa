@@ -89,3 +89,22 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--brand); outline
   .toast { top: calc(max(12px, env(safe-area-inset-top)) + 126px); }
   .rooms-list { grid-template-columns: 1fr; }
 }
+
+/* 머리 위 이름표와 말풍선 */
+.overlay { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 1; }
+.hud { z-index: 2; }
+.tag { position: absolute; left: 0; top: 0; width: 0; height: 0; }
+.tag .name { position: absolute; left: 0; bottom: 0; transform: translateX(-50%); white-space: nowrap; font-size: 11px; font-weight: 600; color: #fff; background: rgba(26, 26, 26, .55); padding: 2px 8px; border-radius: 999px; backdrop-filter: blur(4px); }
+.tag.is-mine .name { background: var(--brand); }
+.tag .bubble { position: absolute; left: 0; bottom: 28px; transform: translateX(-50%); white-space: nowrap; font-size: 13px; font-weight: 600; color: var(--ink); background: #fff; border: 1.5px solid var(--brand); padding: 6px 12px; border-radius: 14px; box-shadow: 0 6px 18px rgba(255, 56, 92, .18); }
+.tag .bubble::after { content: ''; position: absolute; left: 50%; bottom: -7px; width: 10px; height: 10px; background: #fff; border-right: 1.5px solid var(--brand); border-bottom: 1.5px solid var(--brand); transform: translateX(-50%) rotate(45deg); }
+.tag .bubble[hidden] { display: none; }
+.tag .bubble.pop { animation: bubble-in .2s ease; }
+@keyframes bubble-in { from { opacity: 0; transform: translateX(-50%) translateY(6px) scale(.9); } }
+
+/* 한마디 선택창 */
+.say-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.say-list button { padding: 9px 14px; border-radius: 999px; background: #fff; border: 1px solid rgba(0, 0, 0, .08); font-size: 13px; font-weight: 600; transition: border-color .2s, background .2s; }
+.say-list button:hover { border-color: var(--brand); background: var(--brand-soft); }
+.say-emoji { margin-top: 10px; }
+.say-emoji button { font-size: 20px; padding: 6px 11px; line-height: 1; }

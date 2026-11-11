@@ -1,9 +1,10 @@
 /**
- * 함께 있는 사람(접속자) 모델.
- * 지금은 목업 봇 몇 명을 돌리고, 나중에 Supabase Realtime Presence로 교체한다.
+ * 접속자 모델. 다른 사람이 보낸 값은 전부 여기서 검증하고 나서 쓴다.
+ * 서버가 없는 로컬 개발에서는 목업 봇도 같이 돌린다.
  */
-import type { RoomId } from '../scene/rooms';
-import { randomOutfit, type Outfit } from '../scene/avatar';
+import { ROOM_THEMES, type RoomId } from '../scene/rooms';
+import { BOTTOMS, HAIRS, randomOutfit, SKINS, TOPS, type Hat, type Outfit } from '../scene/avatar';
+import type { PeerState } from './net';
 
 export type PeerKind = 'seat' | 'wander' | 'stand';
 
@@ -40,3 +41,48 @@ export function mockPeers(): Peer[] {
     mk(11, 'wander'), mk(12, 'wander'), mk(13, 'seat'),
   ];
 }
+
+/** 말풍선으로 보낼 수 있는 정해진 문구. 이 목록 밖의 텍스트는 받아도 버린다 */
+export const PHRASES = [
+  '안녕하세요 👋', '같이 앉아요', '이 파티 궁금해요', '처음 왔어요',
+  '잘 부탁해요', '다음에 또 봐요', '저쪽 방 가볼까요', '여기 분위기 좋네요',
+];
+export const EMOJIS = ['👍', '😂', '❤️', '🎉', '🍻', '👀'];
+const SAYABLE = new Set([...PHRASES, ...EMOJIS]);
+
+export function isSayable(text: unknown): text is string {
+  return typeof text === 'string' && SAYABLE.has(text);
+}
+
+const HATS: Hat[] = ['none', 'cap', 'beanie'];
+const num = (v: unknown, lo: number, hi: number) => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
+const color = (v: unknown) => num(v, 0, 0xffffff) ? (v as number) : null;
+
+/** 다른 사람이 보낸 상태를 검증해 안전한 값만 돌려준다. 형식이 틀리면 null */
+export function sanitizeState(raw: unknown): PeerState | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const s = raw as Record<string, unknown>;
+  const o = (s.outfit ?? {}) as Record<string, unknown>;
+  const name = typeof s.name === 'string' ? s.name.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 16) : '';
+  const pos = s.pos as unknown[];
+  if (!name || !Array.isArray(pos) || !num(pos[0], -40, 40) || !num(pos[1], -40, 40)) return null;
+  const outfit: Outfit = {
+    top: color(o.top) ?? TOPS[0], bottom: color(o.bottom) ?? BOTTOMS[0],
+    hair: color(o.hair) ?? HAIRS[0], skin: color(o.skin) ?? SKINS[0],
+    hat: HATS.includes(o.hat as Hat) ? (o.hat as Hat) : 'none',
+    hatColor: color(o.hatColor) ?? 0xff385c,
+  };
+  const pose = s.pose === 'walk' || s.pose === 'sit' ? s.pose : 'idle';
+  const room = ROOM_THEMES.some(t => t.id === s.room) ? (s.room as RoomId) : null;
+  return {
+    name, outfit,
+    pos: [pos[0] as number, pos[1] as number],
+    yaw: num(s.yaw, -10, 10) ? (s.yaw as number) : 0,
+    pose,
+    seat: num(s.seat, 0, 500) ? Math.floor(s.seat as number) : null,
+    room,
+  };
+}
+
+export const isXZ = (v: unknown): v is [number, number] =>
+  Array.isArray(v) && v.length === 2 && num(v[0], -40, 40) && num(v[1], -40, 40);

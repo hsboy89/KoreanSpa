@@ -40,7 +40,7 @@ export class Avatar {
   private blinkAt = 2 + Math.random() * 3;
   private eyes: THREE.Mesh[];
 
-  constructor(public name: string, outfit: Outfit) {
+  constructor(public name: string, public outfit: Outfit) {
     this.group.add(this.body);
     const top = new THREE.MeshStandardMaterial({ color: outfit.top, roughness: 0.85 });
     const bottom = new THREE.MeshStandardMaterial({ color: outfit.bottom, roughness: 0.9 });

@@ -2,16 +2,27 @@ import * as THREE from 'three';
 import { buildWorld, type Seat, type World } from './scene/world';
 import { Avatar, cupProp, randomOutfit } from './scene/avatar';
 import { Controls } from './scene/controls';
+import { Peers } from './scene/peers';
 import { Hud, type ActionId } from './ui/hud';
+import { Overlay, type OverlayEntry } from './ui/overlay';
 import { inRect, PLAZA, ROOM_LAYOUTS, ROOM_THEMES, type RoomId } from './scene/rooms';
-import { mockPeers, randomName, type Peer } from './state/presence';
+import { isSayable, mockPeers, randomName, type Peer } from './state/presence';
+import { connectNet, type Msg, type Net, type PeerState, type XZ } from './state/net';
 import { Ambient } from './audio/ambient';
 
 type Task = { kind: 'sit'; seat: Seat } | { kind: 'enter'; room: RoomId };
 
 interface Bot { peer: Peer; avatar: Avatar; nextWander: number; seat: Seat | null }
 
+export interface ConnectInfo { kind: 'supabase' | 'local'; offline: boolean }
+
+/** 유니온의 각 멤버에서 id를 뺀 타입 (Omit은 유니온을 합쳐 버린다) */
+type MsgBody = Msg extends infer M ? (M extends Msg ? Omit<M, 'id'> : never) : never;
+
 const PLAYER_RADIUS = 0.32;
+const POS_SEND_MS = 250;
+const TRACK_MS = 6000;
+const LOCAL_EXPIRE_MS = 12000;
 
 export class Game {
   private renderer: THREE.WebGLRenderer;
@@ -22,12 +33,19 @@ export class Game {
   private bots: Bot[] = [];
   private controls: Controls;
   private hud: Hud;
+  private overlay: Overlay;
+  private peers: Peers;
   private ambient = new Ambient();
   private clock = new THREE.Clock();
 
+  private myId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+  private net: Net | null = null;
+  private lastPosSent = 0;
+  private lastTrack = 0;
+
   private task: Task | null = null;
   private mySeat: Seat | null = null;
-  private takenSeats = new Set<Seat>();
+  private botSeats = new Set<Seat>();
   private zone: RoomId | null = null;
   private keyWalking = false;
   private cheersTimer = 0;
@@ -71,7 +89,8 @@ export class Game {
     this.player.faceYaw(Math.PI);
     this.scene.add(this.player.group);
 
-    this.spawnBots(mockPeers());
+    this.overlay = new Overlay(root);
+    this.peers = new Peers(this.scene, this.world, () => this.refreshPresence(), (id, text) => this.overlay.say(id, text));
 
     this.controls = new Controls(this.camera, this.renderer.domElement, this.world.floors, p => this.onClickFloor(p), e => this.onKey(e));
     // 처음엔 라운지 전체가 보이도록 멀리서 시작한다
@@ -81,11 +100,11 @@ export class Game {
     this.hud = new Hud(root, {
       onAction: id => this.action(id),
       onGoRoom: id => this.goRoom(id),
+      onSay: text => this.say(text),
       onSound: () => this.toggleSound(),
     });
-    this.hud.setPresence(this.bots.length + 1);
     this.hud.setLocation(null);
-    this.refreshRoomCards();
+    this.refreshPresence();
 
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', () => { if (!document.hidden) this.clock.getDelta(); });
@@ -95,9 +114,59 @@ export class Game {
     this.occluderBoxes = this.world.occluders.map(m => new THREE.Box3().setFromObject(m).expandByScalar(0.45));
   }
 
-  start() {
-    this.hud.toast(`${this.player.name}님, 파팅 라운지에 오셨어요. 끌리는 방으로 가볼까요?`, 4000);
+  /** 실시간 서버에 붙는다. 서버가 없으면 같은 기기 탭끼리만 보이는 로컬 모드 + 연습용 봇 */
+  async connect(): Promise<ConnectInfo> {
+    const { net, offline } = await connectNet(this.myId, this.myState());
+    this.net = net;
+    net.onMessage(m => this.onNet(m));
+    window.addEventListener('pagehide', () => net.close());
+    if (net.kind === 'local') this.spawnBots(mockPeers());
+    this.refreshPresence();
+    return { kind: net.kind, offline };
+  }
+
+  start(info: ConnectInfo) {
+    if (info.offline) this.hud.toast('서버에 연결하지 못했어요. 지금은 이 기기의 다른 창만 보여요.', 6000);
+    else if (info.kind === 'local') this.hud.toast(`${this.player.name}님, 연습 모드예요. 서버 설정이 없어 같은 기기의 다른 창만 서로 보여요.`, 5000);
+    else this.hud.toast(`${this.player.name}님, 파팅 라운지에 오셨어요. 끌리는 방으로 가볼까요?`, 4000);
     this.renderer.setAnimationLoop(() => this.frame());
+  }
+
+  // ───────── 네트워크 ─────────
+
+  private myState(): PeerState {
+    const p = this.player.group.position;
+    return {
+      name: this.player.name,
+      outfit: this.outfitOf(this.player),
+      pos: [p.x, p.z],
+      yaw: this.player.group.rotation.y,
+      pose: this.player.pose,
+      seat: this.mySeat ? this.world.seats.indexOf(this.mySeat) : null,
+      room: this.zone,
+    };
+  }
+
+  private outfitOf(a: Avatar) { return a.outfit; }
+
+  private send(m: MsgBody) {
+    this.net?.send({ ...m, id: this.myId } as Msg);
+  }
+
+  private track() {
+    this.lastTrack = performance.now();
+    this.net?.track(this.myState());
+  }
+
+  private onNet(m: Msg) {
+    this.peers.apply(m, performance.now());
+    // 늦게 들어온 사람이 나를 볼 수 있게 내 상태를 알린다
+    if (m.t === 'hello' && this.net?.kind === 'supabase') this.track();
+  }
+
+  private refreshPresence() {
+    this.hud.setPresence(this.peers.count + this.bots.length + 1);
+    this.refreshRoomCards();
   }
 
   // ───────── 입력 ─────────
@@ -111,14 +180,14 @@ export class Game {
     this.pushOutOfWalls(target, PLAYER_RADIUS + 0.06);
     this.task = null;
     this.standUp();
-    this.player.walkTo(this.pathTo(target));
+    this.go(this.pathTo(target));
   }
 
   private onKey(e: KeyboardEvent) {
     if (e.repeat) return;
     if (e.key === 'Escape') { this.hud.closeModals(); return; }
     if (this.hud.modalOpen) return;
-    const map: Record<string, ActionId> = { '1': 'rooms', '2': 'sit', '3': 'wave', '4': 'cheers' };
+    const map: Record<string, ActionId> = { '1': 'rooms', '2': 'sit', '3': 'wave', '4': 'cheers', '5': 'say' };
     const a = map[e.key];
     if (a) this.action(a);
   }
@@ -129,27 +198,38 @@ export class Game {
         this.refreshRoomCards();
         this.hud.showRooms(true);
         break;
+      case 'say':
+        this.hud.showSay(true);
+        break;
       case 'sit': {
         if (this.mySeat) { this.standUp(); this.hud.toast('일어났어요.'); break; }
         const seat = this.nearestFreeSeat();
         if (!seat) { this.hud.toast('근처에 빈 자리가 없어요. 다른 방으로 가볼까요?'); break; }
         this.task = { kind: 'sit', seat };
-        this.player.walkTo(this.pathTo(seat.pos));
+        this.go(this.pathTo(seat.pos));
         this.hud.toast('빈 자리로 걸어가요.');
         break;
       }
       case 'wave':
         this.player.play('wave');
+        this.send({ t: 'emote', kind: 'wave' });
         this.hud.toast('손을 흔들었어요.');
         break;
       case 'cheers':
         this.player.hold(cupProp());
         this.player.play('cheers', 2000);
+        this.send({ t: 'emote', kind: 'cheers' });
         window.clearTimeout(this.cheersTimer);
         this.cheersTimer = window.setTimeout(() => this.player.hold(null), 2100);
         this.hud.toast('건배!');
         break;
     }
+  }
+
+  private say(text: string) {
+    if (!isSayable(text)) return;
+    this.overlay.say(this.myId, text);
+    this.send({ t: 'say', text });
   }
 
   private goRoom(id: RoomId) {
@@ -158,7 +238,7 @@ export class Game {
     this.standUp();
     this.task = { kind: 'enter', room: id };
     const inside = info.doorIn.clone().addScaledVector(info.center.clone().sub(info.doorIn).normalize(), 1.2);
-    this.player.walkTo(this.pathTo(inside));
+    this.go(this.pathTo(inside));
     this.hud.toast(`${theme.name} 방으로 걸어가요.`);
   }
 
@@ -169,6 +249,13 @@ export class Game {
   }
 
   // ───────── 이동 · 경로 ─────────
+
+  /** 내 캐릭터를 걷게 하고 다른 사람들에게도 같은 경로를 보낸다 */
+  private go(path: THREE.Vector3[]) {
+    this.player.walkTo(path);
+    const p = this.player.group.position;
+    this.send({ t: 'walk', from: [p.x, p.z], path: path.map(v => [v.x, v.z] as XZ) });
+  }
 
   private zoneOf(p: THREE.Vector3): RoomId | null {
     for (const l of ROOM_LAYOUTS) if (inRect(l.rect, p.x, p.z)) return l.theme.id;
@@ -213,19 +300,26 @@ export class Game {
   }
 
   private standUp() {
-    if (this.mySeat) { this.takenSeats.delete(this.mySeat); this.mySeat = null; this.hud.setSeated(false); }
+    if (this.mySeat) {
+      this.mySeat = null;
+      this.hud.setSeated(false);
+      this.player.group.position.y = 0;
+      this.send({ t: 'stand' });
+      this.track();
+    }
     if (this.player.pose === 'sit') this.player.setPose('idle');
   }
 
   private nearestFreeSeat(): Seat | null {
     const p = this.player.group.position;
     const zone = this.zoneOf(p);
+    const remote = this.peers.takenSeats();
     let best: Seat | null = null, bestD = Infinity;
-    for (const s of this.world.seats) {
-      if (this.takenSeats.has(s) || s.room !== zone) continue;
+    this.world.seats.forEach((s, i) => {
+      if (s.room !== zone || this.botSeats.has(s) || remote.has(i)) return;
       const d = s.pos.distanceToSquared(p);
       if (d < bestD) { bestD = d; best = s; }
-    }
+    });
     return best;
   }
 
@@ -234,13 +328,15 @@ export class Game {
     this.task = null;
     if (!task) return;
     if (task.kind === 'sit') {
-      if (this.takenSeats.has(task.seat)) { this.hud.toast('누가 먼저 앉았어요. 다른 자리를 찾아요.'); this.action('sit'); return; }
-      this.takenSeats.add(task.seat);
+      const index = this.world.seats.indexOf(task.seat);
+      if (this.botSeats.has(task.seat) || this.peers.takenSeats().has(index)) { this.hud.toast('누가 먼저 앉았어요. 다른 자리를 찾아요.'); this.action('sit'); return; }
       this.mySeat = task.seat;
       this.player.group.position.copy(task.seat.pos);
       this.player.faceYaw(task.seat.yaw);
       this.player.setPose('sit');
       this.hud.setSeated(true);
+      this.send({ t: 'sit', seat: index });
+      this.track();
       this.hud.toast('앉았어요. 같이 앉은 사람에게 손을 흔들어 볼까요?');
     }
   }
@@ -253,28 +349,30 @@ export class Game {
     if (zone && this.controls.distance() > 13) this.zoomTo = 9;
     if (theme) this.hud.toast(`${theme.name} 방이에요. 벽의 QR을 찍으면 이번 주 파티가 보여요.`, 3600);
     else this.hud.toast('광장이에요. 방 목록에서 다른 파티를 골라요.', 2400);
+    this.track();
+    this.refreshRoomCards();
   }
 
   private refreshRoomCards() {
     this.hud.setRooms(ROOM_THEMES.map(theme => ({
       theme,
-      count: this.bots.filter(b => b.peer.room === theme.id).length + (this.zone === theme.id ? 1 : 0),
+      count: this.bots.filter(b => b.peer.room === theme.id).length + this.peers.roomCount(theme.id) + (this.zone === theme.id ? 1 : 0),
     })));
   }
 
-  // ───────── 봇 ─────────
+  // ───────── 봇 (서버 없는 연습 모드) ─────────
 
   private spawnBots(peers: Peer[]) {
     for (const peer of peers) {
-      const a = new Avatar(peer.name, randomOutfit(Math.random()));
+      const a = new Avatar(peer.name, peer.outfit);
       a.speed = 1.5;
       const bot: Bot = { peer, avatar: a, nextWander: 2 + Math.random() * 6, seat: null };
       const room = peer.room ? this.world.rooms.get(peer.room)! : null;
       if (peer.kind === 'seat') {
-        const free = this.world.seats.filter(s => s.room === (peer.room ?? null) && !this.takenSeats.has(s));
+        const free = this.world.seats.filter(s => s.room === (peer.room ?? null) && !this.botSeats.has(s));
         const seat = free[Math.floor(Math.random() * free.length)];
         if (seat) {
-          this.takenSeats.add(seat); bot.seat = seat;
+          this.botSeats.add(seat); bot.seat = seat;
           a.group.position.copy(seat.pos); a.faceYaw(seat.yaw); a.setPose('sit');
         }
       } else if (peer.kind === 'stand' && room) {
@@ -346,8 +444,16 @@ export class Game {
     return p;
   }
 
+  private updateOverlay(now: number) {
+    const head = new THREE.Vector3(0, 1.9, 0);
+    const entries: OverlayEntry[] = [{ id: this.myId, name: this.player.name, head: this.player.group.position.clone().add(head), mine: true }];
+    for (const [id, r] of this.peers.entries()) entries.push({ id, name: r.state.name, head: r.avatar.group.position.clone().add(head) });
+    this.overlay.update(this.camera, entries, now);
+  }
+
   private frame() {
     const dt = Math.min(this.clock.getDelta(), 0.1);
+    const now = performance.now();
 
     const mv = this.controls.moveVector();
     if (mv && !this.hud.modalOpen) {
@@ -356,9 +462,13 @@ export class Game {
       p.addScaledVector(mv, this.player.speed * dt);
       this.player.faceYaw(Math.atan2(mv.x, mv.z));
       if (this.player.pose !== 'walk') this.player.setPose('walk');
+      if (now - this.lastPosSent > POS_SEND_MS) { this.lastPosSent = now; this.send({ t: 'pos', pos: [p.x, p.z], yaw: this.player.group.rotation.y }); }
     } else if (this.keyWalking) {
       this.keyWalking = false;
       if (this.player.pose === 'walk') this.player.setPose('idle');
+      const p = this.player.group.position;
+      this.send({ t: 'pos', pos: [p.x, p.z], yaw: this.player.group.rotation.y });
+      this.track();
     }
 
     let arrived = this.player.update(dt);
@@ -385,8 +495,10 @@ export class Game {
 
     const zone = this.zoneOf(this.player.group.position);
     if (zone !== this.zone) this.onZoneChange(zone);
+    if (this.net && now - this.lastTrack > TRACK_MS) this.track();
 
     this.updateBots(dt);
+    this.peers.update(dt, now, this.net?.kind === 'local' ? LOCAL_EXPIRE_MS : null);
     this.world.update(dt);
 
     this.ambient.setCrackle(0);
@@ -400,6 +512,7 @@ export class Game {
     this.controls.update(dt, this.focusPoint());
     this.fadeOccluders();
     this.renderer.render(this.scene, this.camera);
+    this.updateOverlay(now);
   }
 
   private resize() {
