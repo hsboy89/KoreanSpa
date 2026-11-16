@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildBackdrop } from './backdrop';
 import {
   BRAND_PINK, DOOR_WIDTH, PLAZA, ROOM_LAYOUTS, WALL_HEIGHT, WALL_THICKNESS,
   type Rect, type RoomId, type RoomLayout,
@@ -129,10 +130,8 @@ export function buildWorld(scene: THREE.Scene): World {
     return m;
   }
 
-  // 바깥 배경
-  const backdrop = new THREE.Mesh(new THREE.PlaneGeometry(90, 90), new THREE.MeshStandardMaterial({ color: 0x17131c, roughness: 1 }));
-  backdrop.rotation.x = -Math.PI / 2; backdrop.position.y = -0.2;
-  scene.add(backdrop);
+  // 바깥 배경: 하늘, 공원, 도시
+  animated.push(buildBackdrop(scene));
 
   // ───────── 광장 ─────────
   const plazaTex = tileTexture('#ebe6de', 'rgba(0,0,0,0.07)', 10);

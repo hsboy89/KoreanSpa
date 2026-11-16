@@ -95,8 +95,7 @@ export class Game {
     this.renderer.toneMappingExposure = 1.0;
     root.appendChild(this.renderer.domElement);
 
-    this.scene.background = new THREE.Color(0x17131c);
-    this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.6, 120);
+    this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.6, 600);
 
     this.scene.add(new THREE.HemisphereLight(0xfff4f6, 0x3a2a33, 0.7));
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.2));
