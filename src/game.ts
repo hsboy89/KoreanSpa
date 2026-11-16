@@ -399,7 +399,7 @@ export class Game {
   private async toggleSound() {
     const on = await this.ambient.toggle();
     this.hud.setSound(on);
-    this.hud.toast(on ? '소리를 켰어요. 잔잔한 라운지 음악이 흘러요.' : '소리를 껐어요.');
+    this.hud.toast(on ? '소리를 켰어요. 방마다 다른 음악이 흘러요.' : '소리를 껐어요.');
   }
 
   // ───────── 이동 · 경로 ─────────
@@ -497,6 +497,7 @@ export class Game {
 
   private onZoneChange(zone: RoomId | null) {
     this.zone = zone;
+    this.ambient.setStyle(zone ?? 'plaza');
     const theme = zone ? ROOM_THEMES.find(t => t.id === zone)! : null;
     this.hud.setLocation(theme);
     // 멀리서 보고 있다가 방에 들어가면 가까이 당긴다
@@ -666,8 +667,7 @@ export class Game {
     this.peers.update(dt, now, this.net?.kind === 'local' ? LOCAL_EXPIRE_MS : null);
     this.world.update(dt);
 
-    this.ambient.setCrackle(0);
-    this.ambient.update(dt);
+    this.ambient.update();
 
     if (this.diving && this.controls.approach(6.2, 1.12, Math.min(1, dt * 2.6))) this.diving = false;
     if (this.zoomTo !== null) {

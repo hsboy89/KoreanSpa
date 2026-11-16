@@ -94,4 +94,4 @@ Supabase Realtime의 Presence와 Broadcast로 입장/퇴장, 이동, 앉기, 인
 
 ## 자산
 
-3D 모델과 음원 파일 없이 전부 코드로 생성한다(캔버스 텍스처, 기본 지오메트리, Web Audio 합성, QR은 qrcode 패키지).
+3D 모델과 음원 파일 없이 전부 코드로 생성한다(캔버스 텍스처, 기본 지오메트리, Web Audio 합성(장소별 음악 포함), QR은 qrcode 패키지).
