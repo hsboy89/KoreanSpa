@@ -9,6 +9,10 @@ import { inRect, PLAZA, ROOM_LAYOUTS, ROOM_THEMES, type RoomId } from './scene/r
 import { isSayable, mockPeers, randomName, type Peer } from './state/presence';
 import { connectNet, LOUNGE_CAPACITY, LOUNGE_COUNT, type Msg, type Net, type PeerState, type XZ } from './state/net';
 import { Ambient } from './audio/ambient';
+import { createStatsApi, loadDone, saveDone, type Note, type Stats } from './state/stats';
+import { GuestbookPanel } from './ui/guestbook';
+import type { Answers } from './state/survey';
+import { SurveyPanel } from './ui/survey';
 
 type Task = { kind: 'sit'; seat: Seat } | { kind: 'enter'; room: RoomId };
 
@@ -68,6 +72,14 @@ export class Game {
   private zoomTo: number | null = null;
   /** 입장 직후의 전체 조망 상태. 화면을 처음 누르면 내 캐릭터 뒤로 내려간다 */
   private intro = true;
+  private stats = createStatsApi();
+  private statsData: Stats | null = null;
+  private lastStats = 0;
+  private done = loadDone();
+  private survey!: SurveyPanel;
+  private nudged = false;
+  private guestbook!: GuestbookPanel;
+  private notes: Note[] | null = null;
   private diving = false;
   private occludeRay = new THREE.Ray();
   private occluderBoxes: THREE.Box3[] = [];
@@ -110,6 +122,11 @@ export class Game {
     this.peers = new Peers(this.scene, this.world, () => this.refreshPresence(), (id, text) => this.overlay.say(id, text));
 
     this.controls = new Controls(this.camera, this.renderer.domElement, this.world.floors, p => this.onClickFloor(p), e => this.onKey(e));
+    this.controls.setInteractives(this.world.interactives, action => {
+      if (this.hud.modalOpen) return;
+      if (action === 'survey') this.openSurvey();
+      else if (action === 'guestbook') this.openGuestbook();
+    });
     // 처음엔 라운지 전체가 보이도록 멀리서 시작한다
     this.camera.position.set(this.world.spawn.x, 24, this.world.spawn.z + 21);
     this.controls.snapTo(this.focusPoint());
@@ -120,9 +137,12 @@ export class Game {
       onSay: text => this.say(text),
       onSound: () => this.toggleSound(),
       onOpenLounges: () => void this.openLounges(),
+      onInterest: () => void this.addInterest(),
       onPickLounge: n => this.pickLounge(n),
     });
     this.hud.setLocation(null);
+    this.survey = new SurveyPanel(this.hud.surveyBody, a => this.submitSurvey(a));
+    this.guestbook = new GuestbookPanel(this.hud.guestbookBody, text => this.submitNote(text));
     this.refreshPresence();
 
     window.addEventListener('resize', () => this.resize());
@@ -143,6 +163,10 @@ export class Game {
     if (net.kind === 'local' && !offline && !full) this.spawnBots(mockPeers());
     this.hud.setLounge(lounge, LOUNGE_CAPACITY);
     this.refreshPresence();
+    // 방문을 기록하고 통계를 받아 온다. 실패해도 라운지는 그대로 열린다
+    this.lastStats = performance.now();
+    void this.stats.visit().then(s => this.applyStats(s));
+    void this.refreshGuestbook();
     return { kind: net.kind, offline, full, lounge };
   }
 
@@ -204,6 +228,73 @@ export class Game {
     location.href = url.toString();
   }
 
+  // ───────── 방문 집계 · 설문 ─────────
+
+  private applyStats(s: Stats | null) {
+    if (!s) return;
+    this.statsData = s;
+    this.hud.setSurveyEnabled(true);
+    this.world.setCounter(s.visits, s.today);
+    for (const t of ROOM_THEMES) this.world.setInterest(t.id, s.interest[t.id] ?? 0);
+    this.refreshInterest();
+  }
+
+  private refreshInterest() {
+    const s = this.statsData;
+    if (!s || !this.zone) { this.hud.setInterest(null); return; }
+    this.hud.setInterest({ count: s.interest[this.zone] ?? 0, done: this.done.interest.includes(this.zone) });
+  }
+
+  private async addInterest() {
+    const zone = this.zone;
+    if (!zone || !this.statsData || this.done.interest.includes(zone)) return;
+    this.done.interest.push(zone);
+    saveDone(this.done);
+    this.statsData.interest[zone] = (this.statsData.interest[zone] ?? 0) + 1;
+    this.applyStats(this.statsData);
+    this.hud.toast('기록했어요. 이 파티가 열리면 파팅에서 만나요.');
+    this.applyStats(await this.stats.addInterest(zone));
+  }
+
+  private openSurvey() {
+    if (!this.statsData) { this.hud.toast('설문은 아직 준비 중이에요.'); return; }
+    this.hud.showSurvey(true);
+    if (this.done.survey) this.survey.showResults(this.statsData);
+    else this.survey.start();
+  }
+
+  private async submitSurvey(a: Answers) {
+    const s = await this.stats.submitSurvey(a);
+    if (s) { this.done.survey = true; saveDone(this.done); this.applyStats(s); }
+    return s;
+  }
+
+  private async refreshGuestbook() {
+    const notes = await this.stats.notes();
+    if (!notes) return;
+    this.notes = notes;
+    this.hud.setGuestbookEnabled(true);
+    this.world.setGuestbook(notes.map(n => n.message));
+    this.guestbook.render(notes);
+  }
+
+  private openGuestbook() {
+    if (!this.notes) { this.hud.toast('방명록은 아직 준비 중이에요.'); return; }
+    this.guestbook.render(this.notes);
+    this.hud.showGuestbook(true);
+    void this.refreshGuestbook();
+  }
+
+  /** @returns 빈 문자열이면 성공, 아니면 사용자에게 보여줄 사유 */
+  private async submitNote(text: string): Promise<string> {
+    const result = await this.stats.addNote(text);
+    if (result === 'ok') { await this.refreshGuestbook(); return ''; }
+    if (result === 'daily') return '오늘은 이미 남겼어요. 내일 또 남겨주세요.';
+    if (result === 'blocked') return '링크, 연락처, 거친 말은 남길 수 없어요.';
+    if (result === 'length') return '2자에서 30자 사이로 적어주세요.';
+    return '남기지 못했어요. 잠시 뒤에 다시 해주세요.';
+  }
+
   private refreshPresence() {
     this.hud.setPresence(this.peers.count + this.bots.length + 1);
     this.refreshRoomCards();
@@ -237,7 +328,7 @@ export class Game {
     if (e.repeat) return;
     if (e.key === 'Escape') { this.hud.closeModals(); return; }
     if (this.hud.modalOpen) return;
-    const map: Record<string, ActionId> = { '1': 'rooms', '2': 'sit', '3': 'wave', '4': 'cheers', '5': 'say' };
+    const map: Record<string, ActionId> = { '1': 'rooms', '2': 'sit', '3': 'wave', '4': 'cheers', '5': 'say', '6': 'survey', '7': 'guestbook' };
     const a = map[e.key];
     if (a) this.action(a);
   }
@@ -250,6 +341,12 @@ export class Game {
         break;
       case 'say':
         this.hud.showSay(true);
+        break;
+      case 'survey':
+        this.openSurvey();
+        break;
+      case 'guestbook':
+        this.openGuestbook();
         break;
       case 'sit': {
         if (this.mySeat) { this.standUp(); this.hud.toast('일어났어요.'); break; }
@@ -398,10 +495,14 @@ export class Game {
     // 멀리서 보고 있다가 방에 들어가면 가까이 당긴다
     if (zone && this.intro) this.dive();
     else if (zone && !this.diving && this.controls.distance() > 13) this.zoomTo = 9;
-    if (theme) this.hud.toast(`${theme.name} 방이에요. 벽의 QR을 찍으면 이번 주 파티가 보여요.`, 3600);
+    if (theme && this.statsData && !this.done.survey && !this.nudged) {
+      this.nudged = true;
+      this.hud.toast(`${theme.name} 방이에요. 30초 설문에 답하면 다른 사람들 답을 볼 수 있어요.`, 5000);
+    } else if (theme) this.hud.toast(`${theme.name} 방이에요. 벽의 QR을 찍으면 이번 주 파티가 보여요.`, 3600);
     else this.hud.toast('광장이에요. 방 목록에서 다른 파티를 골라요.', 2400);
     this.track();
     this.refreshRoomCards();
+    this.refreshInterest();
   }
 
   private refreshRoomCards() {
@@ -553,6 +654,7 @@ export class Game {
     // 로컬 모드는 주기적 신호로 살아 있음을 알린다. 서버 모드는 Presence가 대신한다
     if (this.net?.kind === 'local' && now - this.lastTrack > TRACK_MS) this.track();
 
+    if (now - this.lastStats > 60000) { this.lastStats = now; void this.stats.load().then(s => this.applyStats(s)); void this.refreshGuestbook(); }
     this.updateBots(dt);
     this.peers.update(dt, now, this.net?.kind === 'local' ? LOCAL_EXPIRE_MS : null);
     this.world.update(dt);

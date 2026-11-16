@@ -1,7 +1,7 @@
 import { PARTING_URL, type RoomId, type RoomTheme } from '../scene/rooms';
 import { EMOJIS, PHRASES } from '../state/presence';
 
-export type ActionId = 'rooms' | 'sit' | 'wave' | 'cheers' | 'say';
+export type ActionId = 'rooms' | 'sit' | 'wave' | 'cheers' | 'say' | 'survey' | 'guestbook';
 
 export interface HudHandlers {
   onAction(id: ActionId): void;
@@ -9,6 +9,7 @@ export interface HudHandlers {
   onSay(text: string): void;
   onSound(): void;
   onOpenLounges(): void;
+  onInterest(): void;
   onPickLounge(n: number): void;
 }
 
@@ -29,11 +30,13 @@ const ICON = {
 const svg = (d: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
 
 const ACTIONS: { id: ActionId; label: string; key: string; icon: string }[] = [
-  { id: 'rooms', label: '방 목록', key: '1', icon: ICON.rooms },
+  { id: 'rooms', label: '방', key: '1', icon: ICON.rooms },
   { id: 'sit', label: '앉기', key: '2', icon: ICON.sit },
-  { id: 'wave', label: '손 흔들기', key: '3', icon: ICON.wave },
+  { id: 'wave', label: '인사', key: '3', icon: ICON.wave },
   { id: 'cheers', label: '건배', key: '4', icon: ICON.cheers },
   { id: 'say', label: '말하기', key: '5', icon: ICON.say },
+  { id: 'survey', label: '설문', key: '6', icon: '<rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M9 8h6M9 12h6M9 16h3"/>' },
+  { id: 'guestbook', label: '방명록', key: '7', icon: '<path d="M5 4h11l3 3v13H5z"/><path d="M9 9h6M9 13h6"/><path d="M14.5 17.5l3.2-3.2 1.5 1.5-3.2 3.2-2 .5z"/>' },
 ];
 
 export class Hud {
@@ -65,11 +68,24 @@ export class Hud {
       <nav class="panel bar" aria-label="동작">
         ${ACTIONS.map(a => `<button data-action="${a.id}" aria-label="${a.label}">${svg(a.icon)}<span>${a.label}</span><kbd>${a.key}</kbd></button>`).join('')}
       </nav>
+      <button id="interest" class="interest" hidden></button>
       <div id="rooms" class="modal" hidden>
         <div class="panel modal-card rooms-card" role="dialog" aria-modal="true" aria-labelledby="rooms-title">
           <div class="modal-head"><h2 id="rooms-title">어떤 파티가 끌려요?</h2><button id="rooms-close" class="icon-btn" aria-label="닫기">✕</button></div>
           <p>방에 들어가면 벽의 QR로 그 카테고리의 이번 주 파티를 볼 수 있어요.</p>
           <div id="rooms-list" class="rooms-list"></div>
+        </div>
+      </div>
+      <div id="guestbook" class="modal" hidden>
+        <div class="panel modal-card survey-card" role="dialog" aria-modal="true" aria-labelledby="guestbook-title">
+          <div class="modal-head"><h2 id="guestbook-title">방명록</h2><button id="guestbook-close" class="icon-btn" aria-label="닫기">✕</button></div>
+          <div id="guestbook-body"></div>
+        </div>
+      </div>
+      <div id="survey" class="modal" hidden>
+        <div class="panel modal-card survey-card" role="dialog" aria-modal="true" aria-labelledby="survey-title">
+          <div class="modal-head"><h2 id="survey-title">30초 설문</h2><button id="survey-close" class="icon-btn" aria-label="닫기">✕</button></div>
+          <div id="survey-body"></div>
         </div>
       </div>
       <div id="lounges" class="modal" hidden>
@@ -91,13 +107,13 @@ export class Hud {
         <div class="panel modal-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
           <div class="modal-head"><h2 id="help-title">파팅 라운지</h2><button id="help-close" class="icon-btn" aria-label="닫기">✕</button></div>
           <p>파팅의 파티 카테고리를 둘러보는 공간이에요. 지금 들어와 있는 사람들이 그대로 보여요.<br>각 방 벽에 걸린 QR을 폰으로 찍으면 파팅으로 이어져요.</p>
-          <p>바닥 클릭 · WASD · 방향키로 이동<br>드래그로 둘러보기 · 휠과 두 손가락으로 확대/축소<br>1 방 목록 · 2 앉기 · 3 손 흔들기 · 4 건배 · 5 말하기</p>
+          <p>바닥 클릭 · WASD · 방향키로 이동<br>드래그로 둘러보기 · 휠과 두 손가락으로 확대/축소<br>1 방 목록 · 2 앉기 · 3 인사 · 4 건배 · 5 말하기 · 6 설문 · 7 방명록</p>
           <div class="modal-foot"><a class="btn solid" href="${PARTING_URL}" target="_blank" rel="noopener noreferrer">parting.io 열기 ↗</a></div>
         </div>
       </div>`;
     parent.appendChild(this.root);
 
-    for (const id of ['presence', 'where', 'where-name', 'where-sub', 'where-link', 'sound-btn', 'help-btn', 'toast', 'rooms', 'rooms-list', 'rooms-close', 'say', 'say-close', 'help', 'help-close', 'brand', 'brand-caret', 'lounges', 'lounges-list', 'lounges-close']) {
+    for (const id of ['presence', 'where', 'where-name', 'where-sub', 'where-link', 'sound-btn', 'help-btn', 'toast', 'rooms', 'rooms-list', 'rooms-close', 'say', 'say-close', 'help', 'help-close', 'brand', 'brand-caret', 'lounges', 'lounges-list', 'lounges-close', 'interest', 'survey', 'survey-body', 'survey-close', 'guestbook', 'guestbook-body', 'guestbook-close']) {
       this.els[id] = this.root.querySelector<HTMLElement>(`#${id}`)!;
     }
 
@@ -116,6 +132,13 @@ export class Hud {
       this.showRooms(false);
       handlers.onGoRoom(card.dataset.room as RoomId);
     });
+    this.root.querySelector<HTMLElement>('[data-action="survey"]')!.hidden = true;
+    this.root.querySelector<HTMLElement>('[data-action="guestbook"]')!.hidden = true;
+    this.els['guestbook-close'].addEventListener('click', () => this.showGuestbook(false));
+    this.els['guestbook'].addEventListener('click', e => { if (e.target === this.els['guestbook']) this.showGuestbook(false); });
+    this.els['interest'].addEventListener('click', () => handlers.onInterest());
+    this.els['survey-close'].addEventListener('click', () => this.showSurvey(false));
+    this.els['survey'].addEventListener('click', e => { if (e.target === this.els['survey']) this.showSurvey(false); });
     this.els['brand'].addEventListener('click', () => handlers.onOpenLounges());
     this.els['lounges-close'].addEventListener('click', () => this.showLounges(false));
     this.els['lounges'].addEventListener('click', e => {
@@ -134,7 +157,24 @@ export class Hud {
     });
   }
 
-  get modalOpen() { return !this.els['help'].hidden || !this.els['rooms'].hidden || !this.els['say'].hidden || !this.els['lounges'].hidden; }
+  get modalOpen() { return !this.els['help'].hidden || !this.els['rooms'].hidden || !this.els['say'].hidden || !this.els['lounges'].hidden || !this.els['survey'].hidden || !this.els['guestbook'].hidden; }
+  showGuestbook(open: boolean) { this.els['guestbook'].hidden = !open; }
+  get guestbookBody() { return this.els['guestbook-body']; }
+  setGuestbookEnabled(on: boolean) { this.root.querySelector<HTMLElement>('[data-action="guestbook"]')!.hidden = !on; }
+  showSurvey(open: boolean) { this.els['survey'].hidden = !open; }
+  get surveyBody() { return this.els['survey-body']; }
+  /** 서버에서 통계를 받을 수 있을 때만 설문 버튼을 보여준다 */
+  setSurveyEnabled(on: boolean) { this.root.querySelector<HTMLElement>('[data-action="survey"]')!.hidden = !on; }
+
+  /** 방 안에서 보이는 "열리면 갈래요" 버튼. null이면 숨긴다 */
+  setInterest(state: { count: number; done: boolean } | null) {
+    const b = this.els['interest'] as HTMLButtonElement;
+    b.hidden = !state;
+    if (!state) return;
+    b.classList.toggle('is-done', state.done);
+    b.disabled = state.done;
+    b.textContent = state.done ? `${state.count.toLocaleString('ko-KR')}명이 기다려요 ✓` : `이 파티 열리면 갈래요 · ${state.count.toLocaleString('ko-KR')}명`;
+  }
   showLounges(open: boolean) { this.els['lounges'].hidden = !open; }
 
   /** counts가 null이면 확인 중 표시. 인원 -1은 확인하지 못한 라운지 */
@@ -165,7 +205,7 @@ export class Hud {
   showHelp(open: boolean) { this.els['help'].hidden = !open; }
   showRooms(open: boolean) { this.els['rooms'].hidden = !open; }
   showSay(open: boolean) { this.els['say'].hidden = !open; }
-  closeModals() { this.showHelp(false); this.showRooms(false); this.showSay(false); this.showLounges(false); }
+  closeModals() { this.showHelp(false); this.showRooms(false); this.showSay(false); this.showLounges(false); this.showSurvey(false); this.showGuestbook(false); }
 
   private lounge = 0;
   private capacity = 0;

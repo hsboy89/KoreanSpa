@@ -54,6 +54,13 @@ export class Controls {
     const r = this.dom.getBoundingClientRect();
     this.ndc.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
     this.ray.setFromCamera(this.ndc, this.camera);
+    // 키오스크 같은 물건을 먼저 본다
+    const obj = this.ray.intersectObjects(this.interactives.filter(o => { for (let p: THREE.Object3D | null = o; p; p = p.parent) if (!p.visible) return false; return true; }), true)[0];
+    if (obj) {
+      let o: THREE.Object3D | null = obj.object;
+      while (o && !o.userData.action) o = o.parent;
+      if (o) { this.onClickObject(o.userData.action as string); return; }
+    }
     const hit = this.ray.intersectObjects(this.floors, false)[0];
     if (hit) this.onClickFloor(hit.point);
   }
@@ -72,6 +79,13 @@ export class Controls {
     fwd.y = 0; fwd.normalize();
     const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0));
     return fwd.multiplyScalar(fz).addScaledVector(right, fx).normalize();
+  }
+
+  private interactives: THREE.Object3D[] = [];
+  private onClickObject: (action: string) => void = () => {};
+  setInteractives(objects: THREE.Object3D[], onClick: (action: string) => void) {
+    this.interactives = objects;
+    this.onClickObject = onClick;
   }
 
   snapTo(focus: THREE.Vector3) {

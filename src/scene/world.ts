@@ -3,7 +3,7 @@ import {
   BRAND_PINK, DOOR_WIDTH, PLAZA, ROOM_LAYOUTS, WALL_HEIGHT, WALL_THICKNESS,
   type Rect, type RoomId, type RoomLayout,
 } from './rooms';
-import { makeDoorPlate, makeSignTexture, makeStripesTexture, makeTotemFace } from './brand';
+import { makeCounterBoard, makeDoorPlate, makeGuestbookBoard, makeHostBoard, makeInterestBoard, makeKioskTexture, makeSignTexture, makeStripesTexture, makeTotemFace, type LiveTexture } from './brand';
 
 export interface Seat { pos: THREE.Vector3; yaw: number; room: RoomId | null }
 export type Wall = Rect;
@@ -28,6 +28,14 @@ export interface World {
   occluders: THREE.Mesh[];
   spawn: THREE.Vector3;
   update(dt: number): void;
+  /** 눌러서 쓰는 물건들. userData.action에 동작 이름이 있다 */
+  interactives: THREE.Object3D[];
+  /** 광장 전광판과 주최자 안내판의 숫자. 처음 불릴 때 게시판과 키오스크가 나타난다 */
+  setCounter(visits: number, today: number): void;
+  /** 방 안내판 옆 "열리면 갈래요" 숫자 */
+  setInterest(room: RoomId, n: number): void;
+  /** 방명록 게시판에 붙일 최근 글. 처음 불릴 때 게시판이 나타난다 */
+  setGuestbook(notes: string[]): void;
 }
 
 /** 앉았을 때 엉덩이가 의자 윗면에 오도록 하는 그룹 높이 */
@@ -80,6 +88,9 @@ export function buildWorld(scene: THREE.Scene): World {
   const rooms = new Map<RoomId, RoomInfo>();
   const occluders: THREE.Mesh[] = [];
   const animated: ((dt: number) => void)[] = [];
+  const interactives: THREE.Object3D[] = [];
+  const interestBoards = new Map<RoomId, { mesh: THREE.Mesh; live: LiveTexture<[number]> }>();
+  const decal = { polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 };
 
   const wallMat = new THREE.MeshStandardMaterial({ color: 0xf2eee8, roughness: 0.95 });
   const pink = new THREE.MeshStandardMaterial({ color: BRAND_PINK, roughness: 0.6 });
@@ -143,6 +154,60 @@ export function buildWorld(scene: THREE.Scene): World {
   ring.rotation.x = -Math.PI / 2; ring.position.y = 0.035;
   scene.add(totem, totemBase, ring);
   obstacles.push({ x: 0, z: 0, r: 1.45 });
+
+  // 통계 표시물: 서버에서 첫 숫자가 오기 전까지는 숨겨 둔다
+  const statsGroup = new THREE.Group();
+  statsGroup.visible = false;
+  scene.add(statsGroup);
+
+  // 기둥 위 전광판 (네 면 모두 같은 숫자)
+  const counter = makeCounterBoard();
+  const counterFace = new THREE.MeshBasicMaterial({ map: counter.tex });
+  const counterBox = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.84, 2.0), [counterFace, counterFace, pink, pink, counterFace, counterFace]);
+  counterBox.position.set(0, 3.3, 0);
+  // 위에서 내려다보는 첫 화면에서도 숫자가 읽히게 윗면에도 붙인다
+  const counterTop = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.79), new THREE.MeshBasicMaterial({ map: counter.tex, ...decal }));
+  counterTop.rotation.x = -Math.PI / 2;
+  counterTop.position.set(0, 3.3 + 0.42 + 0.03, 0);
+  statsGroup.add(counterBox, counterTop);
+
+  // 주최자 안내판: 위쪽 벽, 와인 방과 보드게임 방 사이
+  const hostBoard = makeHostBoard();
+  const hostMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.76, 1.13), new THREE.MeshStandardMaterial({ map: hostBoard.tex, roughness: 0.6, ...decal }));
+  hostMesh.position.set(0, 1.5, PLAZA.minZ + WALL_THICKNESS / 2 + 0.1);
+  const hostFrame = new THREE.Mesh(new THREE.BoxGeometry(1.86, 1.23, 0.06), new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.6 }));
+  hostFrame.position.set(0, 1.5, PLAZA.minZ + WALL_THICKNESS / 2 + 0.04);
+  statsGroup.add(hostFrame, hostMesh);
+
+  // 설문 키오스크: 아래쪽 벽 앞, 입장 지점 근처
+  const kiosk = new THREE.Group();
+  const kioskPost = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.0, 0.16), darkMetal); kioskPost.position.y = 0.5;
+  const kioskBase = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.38, 0.06, 24), darkMetal); kioskBase.position.y = 0.03;
+  const kioskBody = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.68, 0.08), pink); kioskBody.position.set(0, 1.2, 0); kioskBody.rotation.x = -0.5;
+  const kioskScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.82, 0.6), new THREE.MeshBasicMaterial({ map: makeKioskTexture(), ...decal }));
+  kioskScreen.position.set(0, 1.222, 0.04); kioskScreen.rotation.x = -0.5;
+  kioskScreen.translateZ(0.012);
+  kiosk.add(kioskPost, kioskBase, kioskBody, kioskScreen);
+  kiosk.position.set(2.2, 0, 5.7);
+  kiosk.rotation.y = Math.PI; // 화면이 광장 안쪽(-z)을 본다
+  kiosk.userData.action = 'survey';
+  kioskPost.castShadow = true; kioskBody.castShadow = true;
+  statsGroup.add(kiosk);
+  interactives.push(kiosk);
+
+  // 방명록 게시판: 아래쪽 벽 가운데
+  const guestbook = makeGuestbookBoard();
+  const guestGroup = new THREE.Group();
+  const guestMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.76, 1.13), new THREE.MeshStandardMaterial({ map: guestbook.tex, roughness: 0.8, ...decal }));
+  guestMesh.position.set(0, 1.45, PLAZA.maxZ - WALL_THICKNESS / 2 - 0.1);
+  guestMesh.rotation.y = Math.PI;
+  const guestFrame = new THREE.Mesh(new THREE.BoxGeometry(1.86, 1.23, 0.06), wood);
+  guestFrame.position.set(0, 1.45, PLAZA.maxZ - WALL_THICKNESS / 2 - 0.04);
+  guestGroup.add(guestFrame, guestMesh);
+  guestGroup.userData.action = 'guestbook';
+  guestGroup.visible = false;
+  scene.add(guestGroup);
+  interactives.push(guestGroup);
 
   // 벤치
   const benchSpots = [[-3.6, -4.6], [3.6, -4.6], [-3.6, 4.6], [3.6, 4.6]];
@@ -237,6 +302,15 @@ export function buildWorld(scene: THREE.Scene): World {
     signFrame.position.copy(signPos).addScaledVector(f.V, 0.07);
     signFrame.rotation.y = sign.rotation.y;
     scene.add(signFrame, sign);
+
+    // 안내판 옆 "열리면 갈래요" 숫자판. 숫자가 올 때까지 숨긴다
+    const interest = makeInterestBoard();
+    const interestMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.56), new THREE.MeshStandardMaterial({ map: interest.tex, roughness: 0.6, transparent: true, ...decal }));
+    interestMesh.position.copy(local(f, 2.62, f.halfV - WALL_THICKNESS / 2 - 0.12, 1.42));
+    interestMesh.rotation.y = sign.rotation.y;
+    interestMesh.visible = false;
+    scene.add(interestMesh);
+    interestBoards.set(theme.id, { mesh: interestMesh, live: interest });
 
     // 방 조명
     const light = new THREE.PointLight(theme.light, theme.lightIntensity, 13, 2);
@@ -456,6 +530,25 @@ export function buildWorld(scene: THREE.Scene): World {
   return {
     floors, walls, obstacles, seats, rooms, occluders,
     spawn: new THREE.Vector3(0, 0, 3.2),
+    interactives,
+    setCounter(visits, today) {
+      counter.set(visits, today);
+      hostBoard.set(visits);
+      if (!statsGroup.visible) {
+        statsGroup.visible = true;
+        obstacles.push({ x: kiosk.position.x, z: kiosk.position.z, r: 0.55 });
+      }
+    },
+    setGuestbook(notes) {
+      guestbook.set(notes);
+      guestGroup.visible = true;
+    },
+    setInterest(room, n) {
+      const b = interestBoards.get(room);
+      if (!b) return;
+      b.live.set(n);
+      b.mesh.visible = true;
+    },
     update(dt) { for (const fn of animated) fn(dt); },
   };
 }

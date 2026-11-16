@@ -1,0 +1,30 @@
+html.host-mode, html.host-mode body { overflow: auto; height: auto; background: #faf7f8; }
+html.host-mode #app { position: static; }
+.host { max-width: 1040px; margin: 0 auto; padding: 32px 16px 56px; color: var(--ink); }
+.host-head h1 { margin: 0; font-size: 26px; font-weight: 800; }
+.host-head p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+.host-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 22px; }
+.host-card { background: #fff; border: 1px solid rgba(0, 0, 0, .07); border-radius: 16px; padding: 16px; }
+.host-card small { display: block; color: var(--muted); font-size: 12px; font-weight: 600; }
+.host-card strong { display: block; font-size: 30px; font-weight: 800; color: var(--brand); margin-top: 4px; font-variant-numeric: tabular-nums; }
+.host-card span { display: block; color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+.host-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 12px; }
+.host-grid .bars { background: #fff; border: 1px solid rgba(0, 0, 0, .07); border-radius: 16px; padding: 16px; margin: 0; }
+.host-empty { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+.host-daily { display: flex; align-items: flex-end; gap: 6px; height: 150px; margin-top: 10px; }
+.host-day { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; }
+.host-day i { display: block; width: 100%; max-width: 28px; background: var(--brand); border-radius: 6px 6px 2px 2px; }
+.host-day b { font-size: 11px; font-weight: 700; }
+.host-day span { font-size: 10px; color: var(--muted); white-space: nowrap; }
+.host-combos { list-style: none; margin: 10px 0 0; padding: 0; counter-reset: combo; }
+.host-combos li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid rgba(0, 0, 0, .06); font-size: 13.5px; counter-increment: combo; }
+.host-combos li::before { content: counter(combo); width: 20px; color: var(--muted); font-weight: 700; font-size: 12px; }
+.host-combos li span { flex: 1; min-width: 0; }
+.host-combos li b { color: var(--brand); font-variant-numeric: tabular-nums; }
+.host-foot { margin-top: 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.host-foot p { margin: 0; color: var(--muted); font-size: 12.5px; }
+.host-foot .btn { min-height: 44px; padding: 0 20px; font-size: 14px; }
+@media (max-width: 720px) {
+  .host-cards { grid-template-columns: repeat(2, 1fr); }
+  .host-grid { grid-template-columns: 1fr; }
+}

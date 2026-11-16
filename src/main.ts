@@ -7,6 +7,12 @@ const bootMsg = document.getElementById('boot-message')!;
 const app = document.getElementById('app')!;
 
 async function main() {
+  if (new URLSearchParams(location.search).has('host')) {
+    const { renderHost } = await import('./host');
+    boot.remove();
+    await renderHost(app);
+    return;
+  }
   try {
     const game = new Game(app);
     bootMsg.textContent = '같이 있는 사람을 찾는 중';
