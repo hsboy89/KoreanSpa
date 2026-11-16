@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 
 export type Pose = 'idle' | 'walk' | 'sit';
-export type Emote = 'wave' | 'cheers';
+export type Emote = 'wave' | 'cheers' | 'dance';
+/** 막춤 한 번의 길이 */
+export const DANCE_MS = 5000;
 export type Hat = 'none' | 'cap' | 'beanie';
 
 export interface Outfit { top: number; bottom: number; hair: number; skin: number; hat: Hat; hatColor: number }
@@ -159,8 +161,19 @@ export class Avatar {
   }
 
   play(e: Emote, ms = 1800) {
+    if (this.emote) this.resetEmote();
     this.emote = e;
     this.emoteUntil = this.t + ms / 1000;
+  }
+
+  private resetEmote() {
+    this.emote = null;
+    this.arms.forEach(arm => { arm.rotation.set(0, 0, 0); });
+    this.hand.position.set(0.3, 0.72, 0.3);
+    if (this.pose === 'idle') {
+      this.body.rotation.set(0, 0, 0);
+      this.legs.forEach(l => { l.rotation.x = 0; });
+    }
   }
 
   /** @returns 이번 프레임에 마지막 지점에 도착했으면 true */
@@ -213,10 +226,24 @@ export class Avatar {
     }
 
     if (this.emote) {
-      if (this.t > this.emoteUntil) {
-        this.emote = null;
-        this.arms[1].rotation.set(0, 0, 0);
-        this.hand.position.set(0.3, 0.72, 0.3);
+      // 걷기 시작하면 춤을 멈춘다
+      if (this.t > this.emoteUntil || (this.emote === 'dance' && this.pose === 'walk')) {
+        this.resetEmote();
+      } else if (this.emote === 'dance') {
+        // 막춤: 두 팔을 번갈아 휘젓고, 서 있으면 몸을 흔들며 발을 구른다
+        const b = this.t * 9;
+        this.arms[0].rotation.z = -2 + Math.sin(b) * 0.9;
+        this.arms[1].rotation.z = 2 + Math.sin(b) * 0.9;
+        this.arms[0].rotation.x = Math.cos(b * 1.3) * 0.6;
+        this.arms[1].rotation.x = -Math.cos(b * 1.3) * 0.6;
+        this.head.rotation.z = Math.sin(b) * 0.2;
+        if (this.pose === 'idle') {
+          this.body.position.y = Math.abs(Math.sin(b)) * 0.1;
+          this.body.rotation.y = Math.sin(b * 0.5) * 0.5;
+          this.body.rotation.z = Math.sin(b) * 0.12;
+          this.legs[0].rotation.x = Math.sin(b) * 0.5;
+          this.legs[1].rotation.x = -Math.sin(b) * 0.5;
+        }
       } else if (this.emote === 'wave') {
         this.arms[1].rotation.z = -2.5;
         this.arms[1].rotation.x = Math.sin(this.t * 14) * 0.5;

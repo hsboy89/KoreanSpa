@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { buildWorld, type Seat, type World } from './scene/world';
-import { Avatar, cupProp, randomOutfit, type Outfit } from './scene/avatar';
+import { Avatar, cupProp, DANCE_MS, randomOutfit, type Outfit } from './scene/avatar';
 import { Controls } from './scene/controls';
 import { Peers } from './scene/peers';
 import { Hud, type ActionId } from './ui/hud';
@@ -328,7 +328,7 @@ export class Game {
     if (e.repeat) return;
     if (e.key === 'Escape') { this.hud.closeModals(); return; }
     if (this.hud.modalOpen) return;
-    const map: Record<string, ActionId> = { '1': 'rooms', '2': 'sit', '3': 'wave', '4': 'cheers', '5': 'say', '6': 'survey', '7': 'guestbook' };
+    const map: Record<string, ActionId> = { '1': 'rooms', '2': 'sit', '3': 'wave', '4': 'cheers', '5': 'dance', '6': 'say', '7': 'survey', '8': 'guestbook' };
     const a = map[e.key];
     if (a) this.action(a);
   }
@@ -369,6 +369,13 @@ export class Game {
         window.clearTimeout(this.cheersTimer);
         this.cheersTimer = window.setTimeout(() => this.player.hold(null), 2100);
         this.hud.toast('건배!');
+        break;
+      case 'dance':
+        window.clearTimeout(this.cheersTimer);
+        this.player.hold(null);
+        this.player.play('dance', DANCE_MS);
+        this.send({ t: 'emote', kind: 'dance' });
+        this.hud.toast('막춤 타임!');
         break;
     }
   }

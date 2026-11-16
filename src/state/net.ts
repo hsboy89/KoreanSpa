@@ -30,7 +30,7 @@ export type Msg =
   | { t: 'pos'; id: string; pos: XZ; yaw: number }
   | { t: 'sit'; id: string; seat: number }
   | { t: 'stand'; id: string }
-  | { t: 'emote'; id: string; kind: 'wave' | 'cheers' }
+  | { t: 'emote'; id: string; kind: 'wave' | 'cheers' | 'dance' }
   | { t: 'say'; id: string; text: string }
   | { t: 'bye'; id: string };
 
