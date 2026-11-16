@@ -117,7 +117,7 @@ export function buildWorld(scene: THREE.Scene): World {
 
   // 바깥 배경
   const backdrop = new THREE.Mesh(new THREE.PlaneGeometry(90, 90), new THREE.MeshStandardMaterial({ color: 0x17131c, roughness: 1 }));
-  backdrop.rotation.x = -Math.PI / 2; backdrop.position.y = -0.03;
+  backdrop.rotation.x = -Math.PI / 2; backdrop.position.y = -0.2;
   scene.add(backdrop);
 
   // ───────── 광장 ─────────
@@ -140,7 +140,7 @@ export function buildWorld(scene: THREE.Scene): World {
   const totemBase = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.4, 0.4, 32), pink);
   totemBase.position.set(0, 0.2, 0); totemBase.castShadow = true;
   const ring = new THREE.Mesh(new THREE.RingGeometry(2.3, 2.6, 48), new THREE.MeshStandardMaterial({ color: BRAND_PINK, roughness: 0.8 }));
-  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.012;
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.035;
   scene.add(totem, totemBase, ring);
   obstacles.push({ x: 0, z: 0, r: 1.45 });
 
@@ -218,8 +218,8 @@ export function buildWorld(scene: THREE.Scene): World {
     );
     lintel.position.set(doorCenter.x, WALL_HEIGHT - 0.17, doorCenter.z);
     scene.add(lintel);
-    const plate = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 0.64), new THREE.MeshStandardMaterial({ map: makeDoorPlate(theme.name), roughness: 0.7 }));
-    plate.position.copy(doorCenter).addScaledVector(outward, 0.2); plate.position.y = WALL_HEIGHT + 0.45;
+    const plate = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 0.64), new THREE.MeshStandardMaterial({ map: makeDoorPlate(theme.name), roughness: 0.7, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
+    plate.position.copy(doorCenter).addScaledVector(outward, 0.26); plate.position.y = WALL_HEIGHT + 0.45;
     plate.rotation.y = yawFacing(outward);
     const plateBack = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.74, 0.08), pink.clone());
     plateBack.position.copy(doorCenter).addScaledVector(outward, 0.14); plateBack.position.y = WALL_HEIGHT + 0.45;
@@ -229,12 +229,12 @@ export function buildWorld(scene: THREE.Scene): World {
     occluders.push(plate, plateBack, lintel);
 
     // 뒷벽 안내판 (로고 + QR)
-    const signPos = local(f, 0, f.halfV - WALL_THICKNESS / 2 - 0.05, 1.42);
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 1.93), new THREE.MeshStandardMaterial({ map: makeSignTexture(theme.name, theme.tagline), roughness: 0.6 }));
+    const signPos = local(f, 0, f.halfV - WALL_THICKNESS / 2 - 0.12, 1.42);
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 1.93), new THREE.MeshStandardMaterial({ map: makeSignTexture(theme.name, theme.tagline), roughness: 0.6, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
     sign.position.copy(signPos);
     sign.rotation.y = yawFacing(outward);
     const signFrame = new THREE.Mesh(new THREE.BoxGeometry(3.56, 2.09, 0.06), new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.6 }));
-    signFrame.position.copy(signPos).addScaledVector(f.V, 0.035);
+    signFrame.position.copy(signPos).addScaledVector(f.V, 0.07);
     signFrame.rotation.y = sign.rotation.y;
     scene.add(signFrame, sign);
 
@@ -328,7 +328,7 @@ export function buildWorld(scene: THREE.Scene): World {
         shelf.position.copy(local(f, sideU, 0.4, 0.95)); shelf.rotation.y = f.U.z ? Math.PI / 2 : 0;
         scene.add(shelf);
         const spines = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 1.7), new THREE.MeshStandardMaterial({ map: makeStripesTexture(['#ff385c', '#2f6fed', '#f2c94c', '#27ae60', '#9b51e0', '#f2994a', '#ff385c', '#2f6fed'], false), roughness: 0.8 }));
-        spines.position.copy(local(f, sideU - 0.21, 0.4, 0.95)); spines.rotation.y = yawFacing(f.U.clone().negate());
+        spines.position.copy(local(f, sideU - 0.26, 0.4, 0.95)); spines.rotation.y = yawFacing(f.U.clone().negate());
         scene.add(spines);
         break;
       }
@@ -338,7 +338,7 @@ export function buildWorld(scene: THREE.Scene): World {
         for (let i = 0; i < 26; i++) {
           const w = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 0.12), win);
           const u = (Math.random() - 0.5) * (f.halfU * 2 - 1);
-          w.position.copy(local(f, u, f.halfV - WALL_THICKNESS / 2 - 0.02, 0.3 + Math.random() * 1.9));
+          w.position.copy(local(f, u, f.halfV - WALL_THICKNESS / 2 - 0.06, 0.3 + Math.random() * 1.9));
           w.rotation.y = yawFacing(f.V.clone().negate());
           scene.add(w);
         }
@@ -382,7 +382,7 @@ export function buildWorld(scene: THREE.Scene): World {
           scene.add(b);
         }
         const mat = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 0.7), new THREE.MeshStandardMaterial({ color: 0x5b6ee1, roughness: 0.9 }));
-        mat.rotation.x = -Math.PI / 2; mat.position.copy(local(f, sideU - 1.2, -f.halfV + 1.4, 0.01)); mat.rotation.z = f.U.z ? Math.PI / 2 : 0;
+        mat.rotation.x = -Math.PI / 2; mat.position.copy(local(f, sideU - 1.2, -f.halfV + 1.4, 0.035)); mat.rotation.z = f.U.z ? Math.PI / 2 : 0;
         scene.add(mat);
         break;
       }
@@ -394,13 +394,13 @@ export function buildWorld(scene: THREE.Scene): World {
           scene.add(shelf);
           for (let row = 0; row < 3; row++) {
             const spines = new THREE.Mesh(new THREE.PlaneGeometry(3.3, 0.5), new THREE.MeshStandardMaterial({ map: spineTex, roughness: 0.9 }));
-            spines.position.copy(local(f, su * (sideU - 0.21), 0.6, 0.45 + row * 0.62));
+            spines.position.copy(local(f, su * (sideU - 0.26), 0.6, 0.45 + row * 0.62));
             spines.rotation.y = yawFacing(f.U.clone().multiplyScalar(-su));
             scene.add(spines);
           }
         }
         const rug = new THREE.Mesh(new THREE.CircleGeometry(2.6, 40), new THREE.MeshStandardMaterial({ color: 0x9b4a3a, roughness: 1 }));
-        rug.rotation.x = -Math.PI / 2; rug.position.copy(local(f, 0, 0, 0.012));
+        rug.rotation.x = -Math.PI / 2; rug.position.copy(local(f, 0, 0, 0.035));
         scene.add(rug);
         const shadeMat = new THREE.MeshStandardMaterial({ color: 0xf3e2c0, roughness: 0.9, side: THREE.DoubleSide });
         for (const su of [-1, 1]) {

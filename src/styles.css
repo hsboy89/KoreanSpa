@@ -84,7 +84,9 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--brand); outline
   .hud-top { grid-template-columns: 1fr auto; }
   .where { grid-column: 1 / -1; order: 3; justify-self: stretch; max-width: none; }
   .brand { padding: 7px 12px 7px 8px; }
-  .bar button { width: 66px; height: 56px; }
+  .bar { max-width: calc(100vw - 16px); }
+  .bar button { width: min(66px, calc((100vw - 48px) / 5)); height: 56px; }
+  .bar span { white-space: nowrap; font-size: 10.5px; }
   .bar kbd { display: none; }
   .toast { top: calc(max(12px, env(safe-area-inset-top)) + 126px); }
   .rooms-list { grid-template-columns: 1fr; }

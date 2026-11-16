@@ -81,6 +81,17 @@ export class Controls {
 
   distance() { return this.camera.position.distanceTo(this.orbit.target); }
 
+  /** 카메라를 목표 거리와 내려다보는 각도(0이 정수리 위, 90도가 눈높이)로 조금씩 옮긴다. 다 왔으면 true */
+  approach(dist: number, polar: number, k: number): boolean {
+    const offset = this.camera.position.clone().sub(this.orbit.target);
+    const sph = new THREE.Spherical().setFromVector3(offset);
+    const done = Math.abs(sph.radius - dist) < 0.15 && Math.abs(sph.phi - polar) < 0.02;
+    sph.radius = THREE.MathUtils.lerp(sph.radius, dist, k);
+    sph.phi = THREE.MathUtils.lerp(sph.phi, polar, k);
+    this.camera.position.copy(this.orbit.target).add(offset.setFromSpherical(sph));
+    return done;
+  }
+
   /** 바라보는 방향은 유지한 채 거리만 바꾼다 */
   setDistance(d: number) {
     const offset = this.camera.position.clone().sub(this.orbit.target);

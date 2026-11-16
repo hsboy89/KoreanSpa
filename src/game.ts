@@ -66,6 +66,9 @@ export class Game {
   private lastDist = Infinity;
   /** 방에 들어갈 때 카메라를 당기는 목표 거리. null이면 사용자가 조절한 대로 둔다 */
   private zoomTo: number | null = null;
+  /** 입장 직후의 전체 조망 상태. 화면을 처음 누르면 내 캐릭터 뒤로 내려간다 */
+  private intro = true;
+  private diving = false;
   private occludeRay = new THREE.Ray();
   private occluderBoxes: THREE.Box3[] = [];
   private faded = new Set<THREE.Mesh>();
@@ -81,7 +84,7 @@ export class Game {
     root.appendChild(this.renderer.domElement);
 
     this.scene.background = new THREE.Color(0x17131c);
-    this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 120);
+    this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.6, 120);
 
     this.scene.add(new THREE.HemisphereLight(0xfff4f6, 0x3a2a33, 0.7));
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.2));
@@ -147,7 +150,7 @@ export class Game {
     if (info.full) this.hud.toast('지금은 라운지가 모두 찼어요. 혼자 둘러볼 수 있고, 잠시 뒤 다시 들어오면 자리가 날 거예요.', 8000);
     else if (info.offline) this.hud.toast('서버에 연결하지 못했어요. 지금은 이 기기의 다른 창만 보여요.', 6000);
     else if (info.kind === 'local') this.hud.toast(`${this.player.name}님, 연습 모드예요. 서버 설정이 없어 같은 기기의 다른 창만 서로 보여요.`, 5000);
-    else this.hud.toast(`${this.player.name}님, 파팅 라운지에 오셨어요. 끌리는 방으로 가볼까요?`, 4000);
+    else this.hud.toast(`${this.player.name}님, 파팅 라운지예요. 화면을 누르면 안으로 들어가요.`, 5000);
     this.renderer.setAnimationLoop(() => this.frame());
   }
 
@@ -208,8 +211,18 @@ export class Game {
 
   // ───────── 입력 ─────────
 
+  /** 전체 조망에서 내 캐릭터 바로 뒤 시점으로 내려간다 */
+  private dive() {
+    if (!this.intro) return;
+    this.intro = false;
+    this.diving = true;
+    this.zoomTo = null;
+  }
+
   private onClickFloor(p: THREE.Vector3) {
     if (this.hud.modalOpen) return;
+    // 첫 터치는 이동이 아니라 라운지 안으로 들어가는 동작이다
+    if (this.intro) { this.dive(); return; }
     const target = p.clone();
     target.y = 0;
     // 걷는 중 밀려나는 반경보다 넉넉히 보정해야 목표에 도착할 수 있다
@@ -383,7 +396,8 @@ export class Game {
     const theme = zone ? ROOM_THEMES.find(t => t.id === zone)! : null;
     this.hud.setLocation(theme);
     // 멀리서 보고 있다가 방에 들어가면 가까이 당긴다
-    if (zone && this.controls.distance() > 13) this.zoomTo = 9;
+    if (zone && this.intro) this.dive();
+    else if (zone && !this.diving && this.controls.distance() > 13) this.zoomTo = 9;
     if (theme) this.hud.toast(`${theme.name} 방이에요. 벽의 QR을 찍으면 이번 주 파티가 보여요.`, 3600);
     else this.hud.toast('광장이에요. 방 목록에서 다른 파티를 골라요.', 2400);
     this.track();
@@ -494,7 +508,7 @@ export class Game {
 
     const mv = this.controls.moveVector();
     if (mv && !this.hud.modalOpen) {
-      if (!this.keyWalking) { this.standUp(); this.player.stop(); this.task = null; this.keyWalking = true; }
+      if (!this.keyWalking) { this.standUp(); this.player.stop(); this.task = null; this.keyWalking = true; this.dive(); }
       const p = this.player.group.position;
       p.addScaledVector(mv, this.player.speed * dt);
       this.player.faceYaw(Math.atan2(mv.x, mv.z));
@@ -546,6 +560,7 @@ export class Game {
     this.ambient.setCrackle(0);
     this.ambient.update(dt);
 
+    if (this.diving && this.controls.approach(6.2, 1.12, Math.min(1, dt * 2.6))) this.diving = false;
     if (this.zoomTo !== null) {
       const d = this.controls.distance();
       if (Math.abs(d - this.zoomTo) < 0.2) this.zoomTo = null;
