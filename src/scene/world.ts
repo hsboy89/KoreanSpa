@@ -97,12 +97,15 @@ export function buildWorld(scene: THREE.Scene): World {
   const wood = new THREE.MeshStandardMaterial({ color: 0x8a6240, roughness: 0.85 });
   const darkMetal = new THREE.MeshStandardMaterial({ color: 0x2a2a2e, roughness: 0.5, metalness: 0.4 });
 
-  function addWall(ax: number, az: number, bx: number, bz: number, mat: THREE.Material, height = WALL_HEIGHT) {
+  function addWall(ax: number, az: number, bx: number, bz: number, mat: THREE.Material, plaza = false) {
     const horizontal = Math.abs(bx - ax) >= Math.abs(bz - az);
     const len = horizontal ? Math.abs(bx - ax) : Math.abs(bz - az);
     if (len < 0.05) return;
+    const thick = plaza ? WALL_THICKNESS - 0.06 : WALL_THICKNESS;
+    const height = plaza ? WALL_HEIGHT - 0.05 : WALL_HEIGHT;
+    const along = plaza ? len : len + WALL_THICKNESS;
     const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(horizontal ? len + WALL_THICKNESS : WALL_THICKNESS, height, horizontal ? WALL_THICKNESS : len + WALL_THICKNESS),
+      new THREE.BoxGeometry(horizontal ? along : thick, height, horizontal ? thick : along),
       (mat as THREE.Material).clone(),
     );
     mesh.position.set((ax + bx) / 2, height / 2, (az + bz) / 2);
@@ -137,12 +140,12 @@ export function buildWorld(scene: THREE.Scene): World {
   addFloor(PLAZA, new THREE.MeshStandardMaterial({ map: plazaTex, roughness: 0.9 }), null);
 
   // 광장 둘레 벽(방이 없는 구간만)
-  addWall(-1, PLAZA.minZ, 1, PLAZA.minZ, wallMat);
-  addWall(-1, PLAZA.maxZ, 1, PLAZA.maxZ, wallMat);
-  addWall(PLAZA.maxX, PLAZA.minZ, PLAZA.maxX, -4, wallMat);
-  addWall(PLAZA.maxX, 4, PLAZA.maxX, PLAZA.maxZ, wallMat);
-  addWall(PLAZA.minX, PLAZA.minZ, PLAZA.minX, -4, wallMat);
-  addWall(PLAZA.minX, 4, PLAZA.minX, PLAZA.maxZ, wallMat);
+  addWall(-1, PLAZA.minZ, 1, PLAZA.minZ, wallMat, true);
+  addWall(-1, PLAZA.maxZ, 1, PLAZA.maxZ, wallMat, true);
+  addWall(PLAZA.maxX, PLAZA.minZ, PLAZA.maxX, -4, wallMat, true);
+  addWall(PLAZA.maxX, 4, PLAZA.maxX, PLAZA.maxZ, wallMat, true);
+  addWall(PLAZA.minX, PLAZA.minZ, PLAZA.minX, -4, wallMat, true);
+  addWall(PLAZA.minX, 4, PLAZA.minX, PLAZA.maxZ, wallMat, true);
 
   // 가운데 기둥
   const totemFace = new THREE.MeshStandardMaterial({ map: makeTotemFace(), roughness: 0.7 });
@@ -278,10 +281,10 @@ export function buildWorld(scene: THREE.Scene): World {
     const doorCenter = local(f, 0, -f.halfV);
     const outward = f.V.clone().negate();
     const lintel = new THREE.Mesh(
-      new THREE.BoxGeometry(f.U.x ? DOOR_WIDTH + 0.4 : WALL_THICKNESS, 0.35, f.U.z ? DOOR_WIDTH + 0.4 : WALL_THICKNESS),
+      new THREE.BoxGeometry(f.U.x ? DOOR_WIDTH + 0.4 : WALL_THICKNESS + 0.08, 0.42, f.U.z ? DOOR_WIDTH + 0.4 : WALL_THICKNESS + 0.08),
       pink.clone(),
     );
-    lintel.position.set(doorCenter.x, WALL_HEIGHT - 0.17, doorCenter.z);
+    lintel.position.set(doorCenter.x, WALL_HEIGHT - 0.15, doorCenter.z);
     scene.add(lintel);
     const plate = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 0.64), new THREE.MeshStandardMaterial({ map: makeDoorPlate(theme.name), roughness: 0.7, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
     plate.position.copy(doorCenter).addScaledVector(outward, 0.26); plate.position.y = WALL_HEIGHT + 0.45;
