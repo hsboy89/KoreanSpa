@@ -30,7 +30,7 @@ export type Msg =
   | { t: 'pos'; id: string; pos: XZ; yaw: number }
   | { t: 'sit'; id: string; seat: number }
   | { t: 'stand'; id: string }
-  | { t: 'emote'; id: string; kind: 'wave' | 'cheers' }
+  | { t: 'emote'; id: string; kind: 'wave' | 'cheers' | 'dance' }
   | { t: 'say'; id: string; text: string }
   /** OX 퀴즈 q번 문제의 내 결과. alive는 지금까지 전부 맞혔는지 */
   | { t: 'quiz'; id: string; q: number; ok: boolean; alive: boolean }

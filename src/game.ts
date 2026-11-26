@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { buildWorld, type Seat, type World } from './scene/world';
-import { Avatar, cupProp, randomOutfit, type Outfit } from './scene/avatar';
+import { Avatar, cupProp, DANCE_MS, randomOutfit, type Outfit } from './scene/avatar';
 import { Controls } from './scene/controls';
 import { Peers } from './scene/peers';
 import { Hud, type ActionId } from './ui/hud';
@@ -115,8 +115,7 @@ export class Game {
     this.renderer.toneMappingExposure = 1.0;
     root.appendChild(this.renderer.domElement);
 
-    this.scene.background = new THREE.Color(0x17131c);
-    this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.6, 120);
+    this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.6, 600);
 
     this.scene.add(new THREE.HemisphereLight(0xfff4f6, 0x3a2a33, 0.7));
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.2));
@@ -530,7 +529,7 @@ export class Game {
     if (e.repeat) return;
     if (e.key === 'Escape') { this.hud.closeModals(); return; }
     if (this.hud.modalOpen) return;
-    const map: Record<string, ActionId> = { '1': 'rooms', '2': 'sit', '3': 'wave', '4': 'cheers', '5': 'say', '6': 'survey', '7': 'guestbook' };
+    const map: Record<string, ActionId> = { '1': 'rooms', '2': 'sit', '3': 'wave', '4': 'cheers', '5': 'dance', '6': 'say', '7': 'survey', '8': 'guestbook' };
     const a = map[e.key];
     if (a) this.action(a);
   }
@@ -572,6 +571,13 @@ export class Game {
         this.cheersTimer = window.setTimeout(() => this.player.hold(null), 2100);
         this.hud.toast('건배!');
         break;
+      case 'dance':
+        window.clearTimeout(this.cheersTimer);
+        this.player.hold(null);
+        this.player.play('dance', DANCE_MS);
+        this.send({ t: 'emote', kind: 'dance' });
+        this.hud.toast('막춤 타임!');
+        break;
     }
   }
 
@@ -594,7 +600,7 @@ export class Game {
   private async toggleSound() {
     const on = await this.ambient.toggle();
     this.hud.setSound(on);
-    this.hud.toast(on ? '소리를 켰어요. 잔잔한 라운지 음악이 흘러요.' : '소리를 껐어요.');
+    this.hud.toast(on ? '소리를 켰어요. 방마다 다른 음악이 흘러요.' : '소리를 껐어요.');
   }
 
   // ───────── 이동 · 경로 ─────────
@@ -692,6 +698,7 @@ export class Game {
 
   private onZoneChange(zone: RoomId | null) {
     this.zone = zone;
+    this.ambient.setStyle(zone ?? 'plaza');
     const theme = zone ? ROOM_THEMES.find(t => t.id === zone)! : null;
     this.hud.setLocation(theme);
     this.hud.setPlay(zone ? GAMES[zone].name : null);
@@ -864,8 +871,7 @@ export class Game {
     this.peers.update(dt, now, this.net?.kind === 'local' ? LOCAL_EXPIRE_MS : null);
     this.world.update(dt);
 
-    this.ambient.setCrackle(0);
-    this.ambient.update(dt);
+    this.ambient.update();
 
     if (this.diving && this.controls.approach(6.2, 1.12, Math.min(1, dt * 2.6))) this.diving = false;
     if (this.zoomTo !== null) {

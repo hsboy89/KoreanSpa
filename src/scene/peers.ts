@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Avatar } from './avatar';
+import { Avatar, DANCE_MS } from './avatar';
 import type { World } from './world';
 import type { Msg, PeerState } from '../state/net';
 import { isSayable, isXZ, sanitizeState } from '../state/presence';
@@ -106,6 +106,7 @@ export class Peers {
       }
       case 'emote':
         if (r && (m.kind === 'wave' || m.kind === 'cheers')) { r.lastSeen = now; r.avatar.play(m.kind); }
+        else if (r && m.kind === 'dance') { r.lastSeen = now; r.avatar.play('dance', DANCE_MS); }
         break;
       case 'say':
         if (r && isSayable(m.text)) { r.lastSeen = now; this.onSay(m.id, m.text); }

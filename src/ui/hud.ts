@@ -1,7 +1,7 @@
 import { PARTING_URL, type RoomId, type RoomTheme } from '../scene/rooms';
 import { EMOJIS, PHRASES } from '../state/presence';
 
-export type ActionId = 'rooms' | 'sit' | 'wave' | 'cheers' | 'say' | 'survey' | 'guestbook';
+export type ActionId = 'rooms' | 'sit' | 'wave' | 'cheers' | 'dance' | 'say' | 'survey' | 'guestbook';
 
 export interface HudHandlers {
   onAction(id: ActionId): void;
@@ -37,6 +37,7 @@ const ICON = {
   sit: '<path d="M6 11V5a2 2 0 0 1 2-2h5a2 2 0 0 1 2 2v6"/><path d="M4 11h14a2 2 0 0 1 2 2v3H4a2 2 0 0 1-2-2v-1a2 2 0 0 1 2-2z"/><path d="M5 16v5M19 16v5"/>',
   wave: '<path d="M7 11V6.5a1.5 1.5 0 0 1 3 0V11"/><path d="M10 10V4.5a1.5 1.5 0 0 1 3 0V10"/><path d="M13 10V5.5a1.5 1.5 0 0 1 3 0V12"/><path d="M16 12v-1.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-1a6 6 0 0 1-5.2-3L4 13.5a1.6 1.6 0 0 1 2.8-1.6L8 13.5"/>',
   cheers: '<path d="M8 3h5l-1 8a2.5 2.5 0 0 1-2.5 2.3A2.5 2.5 0 0 1 7 11z"/><path d="M9.5 13.5V20M7 20h5"/><path d="M15 6l4-1.5 1 5.5a2.5 2.5 0 0 1-2 2.9 2.5 2.5 0 0 1-2.8-1.6z"/><path d="M17.5 13.5l1.2 5.7M16 20.2l4.5-1"/>',
+  dance: '<circle cx="12" cy="4.5" r="2"/><path d="M12 6.5v6.5"/><path d="M12 9l-5-4"/><path d="M12 9l5 3"/><path d="M12 13l-4 3 1 4.5"/><path d="M12 13l4 2.5 2.5-2"/>',
   say: '<path d="M4 6a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H10l-5 4v-4a3 3 0 0 1-1-2.2z"/><path d="M8 8h8M8 11.5h5"/>',
   sound: '<path d="M4 10v4h3l4 3V7L7 10z"/><path d="M15 9a3.5 3.5 0 0 1 0 6"/><path d="M17.5 6.5a7 7 0 0 1 0 11"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .8-1 1.7"/><path d="M12 17h.01"/>',
@@ -49,9 +50,10 @@ const ACTIONS: { id: ActionId; label: string; key: string; icon: string }[] = [
   { id: 'sit', label: '앉기', key: '2', icon: ICON.sit },
   { id: 'wave', label: '인사', key: '3', icon: ICON.wave },
   { id: 'cheers', label: '건배', key: '4', icon: ICON.cheers },
-  { id: 'say', label: '말하기', key: '5', icon: ICON.say },
-  { id: 'survey', label: '설문', key: '6', icon: '<rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M9 8h6M9 12h6M9 16h3"/>' },
-  { id: 'guestbook', label: '방명록', key: '7', icon: '<path d="M5 4h11l3 3v13H5z"/><path d="M9 9h6M9 13h6"/><path d="M14.5 17.5l3.2-3.2 1.5 1.5-3.2 3.2-2 .5z"/>' },
+  { id: 'dance', label: '막춤', key: '5', icon: ICON.dance },
+  { id: 'say', label: '말하기', key: '6', icon: ICON.say },
+  { id: 'survey', label: '설문', key: '7', icon: '<rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M9 8h6M9 12h6M9 16h3"/>' },
+  { id: 'guestbook', label: '방명록', key: '8', icon: '<path d="M5 4h11l3 3v13H5z"/><path d="M9 9h6M9 13h6"/><path d="M14.5 17.5l3.2-3.2 1.5 1.5-3.2 3.2-2 .5z"/>' },
 ];
 
 export class Hud {
@@ -152,7 +154,7 @@ export class Hud {
         <div class="panel modal-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
           <div class="modal-head"><h2 id="help-title">파팅 라운지</h2><button id="help-close" class="icon-btn" aria-label="닫기">✕</button></div>
           <p>파팅의 파티 카테고리를 둘러보는 공간이에요. 지금 들어와 있는 사람들이 그대로 보여요.<br>아래 버튼을 누르면 파팅으로 이어져요.</p>
-          <p>바닥 클릭 · WASD · 방향키로 이동<br>드래그로 둘러보기 · 휠과 두 손가락으로 확대/축소<br>1 방 목록 · 2 앉기 · 3 인사 · 4 건배 · 5 말하기 · 6 설문 · 7 방명록</p>
+          <p>바닥 클릭 · WASD · 방향키로 이동<br>드래그로 둘러보기 · 휠과 두 손가락으로 확대/축소<br>1 방 목록 · 2 앉기 · 3 인사 · 4 건배 · 5 막춤 · 6 말하기 · 7 설문 · 8 방명록</p>
           <div class="modal-foot"><a class="btn solid" href="${PARTING_URL}" target="_blank" rel="noopener noreferrer">parting.io 열기 ↗</a></div>
         </div>
       </div>`;
