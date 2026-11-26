@@ -20,7 +20,21 @@ export interface Stats {
   survey: Record<QId, Record<string, number>>;
   /** 카테고리 → 지역 → 응답 수 */
   cross: Record<string, Record<string, number>>;
+  /** 방문 한 번의 평균 체류 시간(초). 기록이 없으면 0 */
+  dwellAvg: number;
+  /** 행동별 사람 수(하루 한 번씩 집계). EventKind 참고 */
+  events: Record<string, number>;
 }
+
+/** 뒤에서 세는 행동. SQL의 check 목록과 같아야 한다 */
+export type EventKind = 'party_click' | 'quiz_join' | 'quiz_perfect' | 'wardrobe' | `game_${RoomId}`;
+
+/** 가장 최근 퀴즈 우승자 */
+export interface Winners { day: string; count: number; names: string[] }
+
+let offset = 0;
+/** 서버 시각 - 이 기기 시각(ms). 퀴즈 시작을 모두에게 같은 순간으로 맞추는 데 쓴다 */
+export const clockOffset = () => offset;
 
 export interface Note { message: string; at: string }
 /** 방명록 등록 결과. 'error'는 서버에 닿지 못한 경우 */
@@ -34,6 +48,11 @@ export interface StatsApi {
   load(): Promise<Stats | null>;
   addInterest(room: RoomId): Promise<Stats | null>;
   submitSurvey(a: Answers): Promise<Stats | null>;
+  /** 체류 시간을 초 단위로 더한다 */
+  dwell(seconds: number): void;
+  event(kind: EventKind): void;
+  quizWin(name: string): void;
+  winners(): Promise<Winners | null>;
 }
 
 const VISITOR_KEY = 'parting.visitor';
@@ -64,6 +83,8 @@ function normalize(raw: unknown): Stats | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   const s = (r.survey ?? {}) as Record<string, unknown>;
+  // 기기 시계가 틀려도 퀴즈가 같은 순간에 시작하도록 서버 시각과의 차이를 기억한다
+  if (typeof r.now === 'number' && Number.isFinite(r.now)) offset = r.now - Date.now();
   const cross: Stats['cross'] = {};
   if (r.cross && typeof r.cross === 'object') for (const [k, v] of Object.entries(r.cross as Record<string, unknown>)) cross[k] = counts(v);
   return {
@@ -73,6 +94,8 @@ function normalize(raw: unknown): Stats | null {
     surveyCount: num(r.surveyCount),
     survey: { category: counts(s.category), region: counts(s.region), size: counts(s.size), time: counts(s.time), fee: counts(s.fee), worry: counts(s.worry) },
     cross,
+    dwellAvg: num(r.dwellAvg),
+    events: counts(r.events),
   };
 }
 
@@ -109,6 +132,26 @@ class SupabaseStats implements StatsApi {
     });
   }
 
+  dwell(seconds: number) { this.fire('lounge_dwell', { p_visitor: this.id, p_seconds: Math.round(seconds) }); }
+  event(kind: EventKind) { this.fire('lounge_event', { p_visitor: this.id, p_kind: kind }); }
+  quizWin(name: string) { this.fire('lounge_quiz_win', { p_visitor: this.id, p_name: name }); }
+
+  async winners(): Promise<Winners | null> {
+    const { data, error } = await this.client.rpc('lounge_quiz_latest');
+    if (error || !data || typeof data !== 'object') return null;
+    const d = data as Record<string, unknown>;
+    if (typeof d.day !== 'string') return null;
+    return {
+      day: d.day, count: num(d.count),
+      names: Array.isArray(d.names) ? d.names.filter(n => typeof n === 'string').map(n => String(n).slice(0, 16)).slice(0, 5) : [],
+    };
+  }
+
+  /** 결과를 기다리지 않는 기록용 호출. 실패해도 화면에는 영향이 없다 */
+  private fire(fn: string, args: Record<string, unknown>) {
+    void this.client.rpc(fn, args).then(({ error }) => { if (error) console.warn(`${fn} 실패`, error.message); });
+  }
+
   private async call(fn: string, args: Record<string, unknown>) {
     const { error } = await this.client.rpc(fn, args);
     if (error) { console.warn(`${fn} 실패`, error.message); return null; }
@@ -119,16 +162,16 @@ class SupabaseStats implements StatsApi {
 /** 서버 설정이 없는 개발 환경용. 이 브라우저의 기록만 센다 */
 class LocalStats implements StatsApi {
   private key = 'parting.localstats';
-  private data: { days: string[]; interest: string[]; survey: Answers | null; notes: Note[] };
+  private data: { days: string[]; interest: string[]; survey: Answers | null; notes: Note[]; seconds: number; events: Record<string, number>; winner: Winners | null };
 
   constructor() {
     let d: Partial<LocalStats['data']> = {};
     try { d = JSON.parse(localStorage.getItem(this.key) ?? '{}'); } catch { /* ignore */ }
-    this.data = { days: d.days ?? [], interest: d.interest ?? [], survey: d.survey ?? null, notes: d.notes ?? [] };
+    this.data = { days: d.days ?? [], interest: d.interest ?? [], survey: d.survey ?? null, notes: d.notes ?? [], seconds: d.seconds ?? 0, events: d.events ?? {}, winner: d.winner ?? null };
   }
 
   async load() {
-    const { days, interest, survey } = this.data;
+    const { days, interest, survey, seconds, events } = this.data;
     const today = new Date().toISOString().slice(0, 10);
     const one = (k: string | undefined) => (k ? { [k]: 1 } : {});
     return {
@@ -141,6 +184,8 @@ class LocalStats implements StatsApi {
         size: one(survey?.size), time: one(survey?.time), fee: one(survey?.fee), worry: one(survey?.worry),
       },
       cross: survey ? { [survey.category]: Object.fromEntries(survey.regions.map(r => [r, 1])) } : {},
+      dwellAvg: days.length ? Math.round(seconds / days.length) : 0,
+      events: { ...events },
     } satisfies Stats;
   }
 
@@ -157,6 +202,10 @@ class LocalStats implements StatsApi {
     return 'ok';
   }
   async submitSurvey(a: Answers) { this.data.survey = a; return this.save(); }
+  dwell(seconds: number) { this.data.seconds += Math.round(seconds); void this.save(); }
+  event(kind: EventKind) { this.data.events[kind] = 1; void this.save(); }
+  quizWin(name: string) { this.data.winner = { day: new Date().toISOString().slice(0, 10), count: 1, names: [name] }; void this.save(); }
+  async winners() { return this.data.winner; }
 
   private save() {
     try { localStorage.setItem(this.key, JSON.stringify(this.data)); } catch { /* ignore */ }

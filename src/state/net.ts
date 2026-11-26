@@ -32,6 +32,8 @@ export type Msg =
   | { t: 'stand'; id: string }
   | { t: 'emote'; id: string; kind: 'wave' | 'cheers' }
   | { t: 'say'; id: string; text: string }
+  /** OX 퀴즈 q번 문제의 내 결과. alive는 지금까지 전부 맞혔는지 */
+  | { t: 'quiz'; id: string; q: number; ok: boolean; alive: boolean }
   | { t: 'bye'; id: string };
 
 export interface Net {

@@ -3,7 +3,8 @@ import {
   BRAND_PINK, DOOR_WIDTH, PLAZA, ROOM_LAYOUTS, WALL_HEIGHT, WALL_THICKNESS,
   type Rect, type RoomId, type RoomLayout,
 } from './rooms';
-import { makeCounterBoard, makeDoorPlate, makeGuestbookBoard, makeHostBoard, makeInterestBoard, makeKioskTexture, makeSignTexture, makeStripesTexture, makeTotemFace, type LiveTexture } from './brand';
+import { QUIZ_HOUR } from '../state/quiz';
+import { makeCounterBoard, makeDoorPlate, makeGuestbookBoard, makeQuizBoard, makeZoneTexture, makeInterestBoard, makeKioskTexture, makeSignTexture, makeStripesTexture, makeTotemFace, type LiveTexture } from './brand';
 
 export interface Seat { pos: THREE.Vector3; yaw: number; room: RoomId | null }
 export type Wall = Rect;
@@ -30,7 +31,11 @@ export interface World {
   update(dt: number): void;
   /** 눌러서 쓰는 물건들. userData.action에 동작 이름이 있다 */
   interactives: THREE.Object3D[];
-  /** 광장 전광판과 주최자 안내판의 숫자. 처음 불릴 때 게시판과 키오스크가 나타난다 */
+  /** 광장 벽 퀴즈 안내판의 아래 두 줄 */
+  setQuizBoard(sub: string, names: string): void;
+  /** 광장 바닥의 O/X 구역. correct를 주면 정답 쪽만 밝힌다 */
+  setQuizZones(visible: boolean, correct?: boolean | null): void;
+  /** 광장 전광판의 숫자. 처음 불릴 때 전광판과 키오스크가 나타난다 */
   setCounter(visits: number, today: number): void;
   /** 방 안내판 옆 "열리면 갈래요" 숫자 */
   setInterest(room: RoomId, n: number): void;
@@ -174,13 +179,27 @@ export function buildWorld(scene: THREE.Scene): World {
   counterTop.position.set(0, 3.3 + 0.42 + 0.03, 0);
   statsGroup.add(counterBox, counterTop);
 
-  // 주최자 안내판: 위쪽 벽, 와인 방과 보드게임 방 사이
-  const hostBoard = makeHostBoard();
-  const hostMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.76, 1.13), new THREE.MeshStandardMaterial({ map: hostBoard.tex, roughness: 0.6, ...decal }));
+  // 퀴즈 안내판: 위쪽 벽, 와인 방과 보드게임 방 사이. 퀴즈는 서버 없이도 열리므로 항상 보인다
+  const quizBoard = makeQuizBoard(QUIZ_HOUR);
+  const hostMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.76, 1.13), new THREE.MeshBasicMaterial({ map: quizBoard.tex, ...decal }));
   hostMesh.position.set(0, 1.5, PLAZA.minZ + WALL_THICKNESS / 2 + 0.1);
   const hostFrame = new THREE.Mesh(new THREE.BoxGeometry(1.86, 1.23, 0.06), new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.6 }));
   hostFrame.position.set(0, 1.5, PLAZA.minZ + WALL_THICKNESS / 2 + 0.04);
-  statsGroup.add(hostFrame, hostMesh);
+  scene.add(hostFrame, hostMesh);
+
+  // 퀴즈 O/X 구역: 광장 왼쪽 절반이 O, 오른쪽 절반이 X
+  const zoneGroup = new THREE.Group();
+  zoneGroup.visible = false;
+  const zoneW = (PLAZA.maxX - PLAZA.minX) / 2 - 0.5, zoneD = PLAZA.maxZ - PLAZA.minZ - 0.8;
+  const zoneMats = (['O', 'X'] as const).map(mark => new THREE.MeshBasicMaterial({ map: makeZoneTexture(mark), transparent: true, opacity: 0.5, depthWrite: false, ...decal }));
+  zoneMats.forEach((mat, i) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(zoneW, zoneD), mat);
+    m.rotation.x = -Math.PI / 2;
+    m.position.set((i ? 1 : -1) * (zoneW / 2 + 0.25), 0.02, 0);
+    m.renderOrder = 1;
+    zoneGroup.add(m);
+  });
+  scene.add(zoneGroup);
 
   // 설문 키오스크: 아래쪽 벽 앞, 입장 지점 근처
   const kiosk = new THREE.Group();
@@ -296,7 +315,7 @@ export function buildWorld(scene: THREE.Scene): World {
     scene.add(plateBack, plate);
     occluders.push(plate, plateBack, lintel);
 
-    // 뒷벽 안내판 (로고 + QR)
+    // 뒷벽 안내판 (로고 + 카테고리)
     const signPos = local(f, 0, f.halfV - WALL_THICKNESS / 2 - 0.12, 1.42);
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 1.93), new THREE.MeshStandardMaterial({ map: makeSignTexture(theme.name, theme.tagline), roughness: 0.6, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
     sign.position.copy(signPos);
@@ -536,11 +555,16 @@ export function buildWorld(scene: THREE.Scene): World {
     interactives,
     setCounter(visits, today) {
       counter.set(visits, today);
-      hostBoard.set(visits);
       if (!statsGroup.visible) {
         statsGroup.visible = true;
         obstacles.push({ x: kiosk.position.x, z: kiosk.position.z, r: 0.55 });
       }
+    },
+    setQuizBoard(sub, names) { quizBoard.set(sub, names); },
+    setQuizZones(visible, correct = null) {
+      zoneGroup.visible = visible;
+      zoneMats[0].opacity = correct === null ? 0.5 : correct ? 0.85 : 0.14;
+      zoneMats[1].opacity = correct === null ? 0.5 : correct ? 0.14 : 0.85;
     },
     setGuestbook(notes) {
       guestbook.set(notes);

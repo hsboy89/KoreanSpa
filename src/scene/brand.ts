@@ -1,6 +1,4 @@
 import * as THREE from 'three';
-import QRCode from 'qrcode';
-import { PARTING_URL } from './rooms';
 
 const PINK = '#ff385c';
 const FONT = '"Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", sans-serif';
@@ -44,7 +42,7 @@ export function drawLogoMark(g: CanvasRenderingContext2D, x: number, y: number, 
   g.restore();
 }
 
-/** 벽에 거는 안내판: 로고, 카테고리 이름, QR. QR은 준비되는 대로 그려 넣는다 */
+/** 벽에 거는 안내판: 로고, 카테고리 이름 */
 export function makeSignTexture(category: string, tagline: string): THREE.CanvasTexture {
   const W = 1200, H = 680;
   const c = document.createElement('canvas');
@@ -74,34 +72,20 @@ export function makeSignTexture(category: string, tagline: string): THREE.Canvas
 
   g.fillStyle = '#1a1a1a';
   g.font = `700 36px ${FONT}`;
-  g.fillText('QR을 찍으면 이번 주 파티가 보여요', 70, 585);
+  g.fillText('이번 주 파티는 파팅에서 볼 수 있어요', 70, 585);
   g.fillStyle = '#8a8a8a';
   g.font = `500 30px ${FONT}`;
   g.fillText('parting.io', 70, 632);
 
-  // QR 자리
-  const qx = W - 70 - 460, qy = 110, qs = 460;
-  g.fillStyle = '#f4f4f4';
-  roundRect(g, qx, qy, qs, qs, 28); g.fill();
+  // 오른쪽 큰 로고
+  const qx = W - 70 - 400, qy = 140, qs = 400;
+  g.fillStyle = '#fff0f3';
+  roundRect(g, qx, qy, qs, qs, 48); g.fill();
+  drawLogoMark(g, qx + 60, qy + 60, qs - 120);
 
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
-
-  const qr = document.createElement('canvas');
-  QRCode.toCanvas(qr, PARTING_URL, { width: 420, margin: 1, errorCorrectionLevel: 'M', color: { dark: '#1a1a1a', light: '#ffffff' } })
-    .then(() => {
-      g.fillStyle = '#ffffff';
-      roundRect(g, qx, qy, qs, qs, 28); g.fill();
-      g.drawImage(qr, qx + 20, qy + 20, 420, 420);
-      // 가운데 로고
-      g.fillStyle = '#ffffff';
-      roundRect(g, qx + qs / 2 - 46, qy + qs / 2 - 46, 92, 92, 18); g.fill();
-      drawLogoMark(g, qx + qs / 2 - 38, qy + qs / 2 - 38, 76);
-      tex.needsUpdate = true;
-    })
-    .catch(err => console.warn('QR 생성 실패', err));
-
   return tex;
 }
 
@@ -203,33 +187,46 @@ export function makeInterestBoard(): LiveTexture<[number]> {
   });
 }
 
-/** 광장 벽의 주최자 안내판 */
-export function makeHostBoard(): LiveTexture<[number]> {
-  const qr = document.createElement('canvas');
-  let qrReady = false;
-  let last = 0;
-  const board = live<[number]>(900, 580, (g, visits) => {
-    last = visits;
-    g.fillStyle = '#ffffff'; roundRect(g, 0, 0, 900, 580, 36); g.fill();
+/** 광장 벽의 퀴즈 안내판. sub는 "어제 우승 3명" 같은 한 줄, names는 우승자 이름들 */
+export function makeQuizBoard(hour: number): LiveTexture<[string, string]> {
+  const board = live<[string, string]>(900, 580, (g, sub, names) => {
+    g.fillStyle = '#1a1a1a'; roundRect(g, 0, 0, 900, 580, 36); g.fill();
     g.fillStyle = PINK; g.fillRect(0, 0, 900, 14);
-    drawLogoMark(g, 56, 56, 92);
     g.textAlign = 'left'; g.textBaseline = 'middle';
-    g.fillStyle = '#8a8a8a'; g.font = `600 34px ${FONT}`;
-    g.fillText('주최자 안내', 170, 102);
-    g.fillStyle = '#1a1a1a'; g.font = `800 62px ${FONT}`;
-    g.fillText('파티를 열어보세요', 56, 228);
-    g.fillStyle = PINK; g.font = `800 50px ${FONT}`;
-    g.fillText(`지금까지 ${fmt(visits)}번`, 56, 322);
-    g.fillText('방문했어요', 56, 386);
-    g.fillStyle = '#3a3a3a'; g.font = `600 32px ${FONT}`;
-    g.fillText('주최 문의는 QR로 · parting.io', 56, 500);
-    g.fillStyle = '#f4f4f4'; roundRect(g, 600, 170, 250, 250, 20); g.fill();
-    if (qrReady) g.drawImage(qr, 612, 182, 226, 226);
+    g.fillStyle = '#ff8ca3'; g.font = `700 38px ${FONT}`;
+    g.fillText('오늘의 파팅 퀴즈', 56, 92);
+    g.fillStyle = '#ffffff'; g.font = `800 104px ${FONT}`;
+    g.fillText(`매일 밤 ${hour - 12}시`, 52, 214);
+    g.fillStyle = '#ffd166'; g.font = `700 40px ${FONT}`;
+    g.fillText('광장에서 OX 퀴즈 · 전부 맞히면 왕관', 56, 326);
+    g.fillStyle = 'rgba(255,255,255,.14)'; g.fillRect(56, 384, 788, 3);
+    g.fillStyle = '#ffffff'; g.font = `700 40px ${FONT}`;
+    g.fillText(sub, 56, 444);
+    g.fillStyle = '#bdbdbd'; g.font = `500 32px ${FONT}`;
+    let line = names;
+    while (line.length > 4 && g.measureText(line).width > 788) line = line.slice(0, -2) + '…';
+    g.fillText(line, 56, 510);
   });
-  QRCode.toCanvas(qr, PARTING_URL, { width: 226, margin: 1, errorCorrectionLevel: 'M', color: { dark: '#1a1a1a', light: '#ffffff' } })
-    .then(() => { qrReady = true; board.set(last); })
-    .catch(err => console.warn('QR 생성 실패', err));
+  board.set('첫 우승자를 기다려요', 'O는 파란 바닥, X는 분홍 바닥에 서요');
   return board;
+}
+
+/** 퀴즈 때 광장 바닥에 까는 O/X 구역 */
+export function makeZoneTexture(mark: 'O' | 'X'): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 716;
+  const g = c.getContext('2d')!;
+  const color = mark === 'O' ? '#2f6fed' : '#ff385c';
+  g.fillStyle = color; g.globalAlpha = 0.55; g.fillRect(0, 0, 512, 716);
+  g.globalAlpha = 1;
+  g.strokeStyle = '#ffffff'; g.lineWidth = 16; g.strokeRect(20, 20, 472, 676);
+  g.lineWidth = 54; g.lineCap = 'round';
+  if (mark === 'O') { g.beginPath(); g.arc(256, 358, 150, 0, Math.PI * 2); g.stroke(); }
+  else { g.beginPath(); g.moveTo(116, 218); g.lineTo(396, 498); g.moveTo(396, 218); g.lineTo(116, 498); g.stroke(); }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
 }
 
 /** 설문 키오스크 화면 */

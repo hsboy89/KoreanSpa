@@ -15,7 +15,8 @@ export interface RoomTheme {
   lightIntensity: number;
 }
 
-export const PARTING_URL = 'https://parting.io/';
+/** utm_source는 파팅 쪽 통계에서 라운지에서 넘어온 방문을 구분하기 위한 표시 */
+export const PARTING_URL = 'https://parting.io/?utm_source=lounge';
 export const BRAND_PINK = 0xff385c;
 
 export const ROOM_THEMES: RoomTheme[] = [

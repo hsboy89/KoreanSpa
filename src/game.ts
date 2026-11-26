@@ -9,7 +9,12 @@ import { inRect, PLAZA, ROOM_LAYOUTS, ROOM_THEMES, type RoomId } from './scene/r
 import { isSayable, mockPeers, randomName, type Peer } from './state/presence';
 import { connectNet, LOUNGE_CAPACITY, LOUNGE_COUNT, type Msg, type Net, type PeerState, type XZ } from './state/net';
 import { Ambient } from './audio/ambient';
-import { createStatsApi, loadDone, saveDone, type Note, type Stats } from './state/stats';
+import { clockOffset, createStatsApi, loadDone, saveDone, type Note, type Stats } from './state/stats';
+import { COIN_PER_CORRECT, COIN_PERFECT, formatLeft, QUIZ_COUNT, QUIZ_HOUR, quizPhase, type QuizPhase } from './state/quiz';
+import { Wallet } from './state/wallet';
+import { WardrobePanel } from './ui/wardrobe';
+import { GAMES, MiniGamePanel } from './ui/minigames';
+import type { Hat } from './scene/avatar';
 import { GuestbookPanel } from './ui/guestbook';
 import type { Answers } from './state/survey';
 import { SurveyPanel } from './ui/survey';
@@ -81,6 +86,21 @@ export class Game {
   private guestbook!: GuestbookPanel;
   private notes: Note[] | null = null;
   private diving = false;
+  private wallet = new Wallet();
+  private wardrobe!: WardrobePanel;
+  private minigame!: MiniGamePanel;
+  /** 코인으로 바꾸기 전까지 쌓인 체류 초 */
+  private stay = 0;
+  /** 서버에 아직 알리지 않은 체류 초 */
+  private dwell = 0;
+  /** 주소에 ?quiz=test 를 붙이면 20초 뒤 연습 퀴즈가 한 번 열린다. 보상과 기록은 없다 */
+  private quizTest = new URLSearchParams(location.search).get('quiz') === 'test' ? Date.now() + 20_000 : undefined;
+  private quizKey = '';
+  private quizSecond = -1;
+  private quizAsked = -1;
+  private quizAnswers = new Map<number, boolean>();
+  private quizPlayed = false;
+  private quizHint = '';
   private occludeRay = new THREE.Ray();
   private occluderBoxes: THREE.Box3[] = [];
   private faded = new Set<THREE.Mesh>();
@@ -113,7 +133,7 @@ export class Game {
     this.world = buildWorld(this.scene);
 
     const me = loadIdentity();
-    this.player = new Avatar(me.name, me.outfit);
+    this.player = new Avatar(me.name, this.wallet.outfit ?? me.outfit);
     this.player.group.position.copy(this.world.spawn);
     this.player.faceYaw(Math.PI);
     this.scene.add(this.player.group);
@@ -124,6 +144,8 @@ export class Game {
     this.controls = new Controls(this.camera, this.renderer.domElement, this.world.floors, p => this.onClickFloor(p), e => this.onKey(e));
     this.controls.setInteractives(this.world.interactives, action => {
       if (this.hud.modalOpen) return;
+      // 첫 터치는 무엇을 눌렀든 라운지 안으로 들어가는 동작이다
+      if (this.intro) { this.dive(); return; }
       if (action === 'survey') this.openSurvey();
       else if (action === 'guestbook') this.openGuestbook();
     });
@@ -139,14 +161,25 @@ export class Game {
       onOpenLounges: () => void this.openLounges(),
       onInterest: () => void this.addInterest(),
       onPickLounge: n => this.pickLounge(n),
+      onPartyClick: () => this.stats.event('party_click'),
+      onOpenWardrobe: () => { this.wardrobe.render(); this.hud.showWardrobe(true); },
+      onPlay: () => this.openGame(),
+      onGameClosed: () => this.minigame.close(),
     });
+    this.minigame = new MiniGamePanel(this.hud.gameBody, (game, coins) => {
+      if (coins) this.earn(coins);
+      this.stats.event(`game_${game.id}`);
+    });
+    this.wardrobe = new WardrobePanel(this.hud.wardrobeBody, this.wallet, () => this.player.outfit, (o, bought) => this.changeOutfit(o, bought));
+    this.hud.setCoins(this.wallet.coins);
     this.hud.setLocation(null);
     this.survey = new SurveyPanel(this.hud.surveyBody, a => this.submitSurvey(a));
     this.guestbook = new GuestbookPanel(this.hud.guestbookBody, text => this.submitNote(text));
     this.refreshPresence();
 
     window.addEventListener('resize', () => this.resize());
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) this.clock.getDelta(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) this.flushDwell(); else this.clock.getDelta(); });
+    window.addEventListener('pagehide', () => this.flushDwell());
 
     // 가림 판정용 경계 상자. 벽과 명패는 움직이지 않으므로 한 번만 계산한다
     this.scene.updateMatrixWorld(true);
@@ -167,6 +200,7 @@ export class Game {
     this.lastStats = performance.now();
     void this.stats.visit().then(s => this.applyStats(s));
     void this.refreshGuestbook();
+    void this.refreshWinners();
     return { kind: net.kind, offline, full, lounge };
   }
 
@@ -175,7 +209,175 @@ export class Game {
     else if (info.offline) this.hud.toast('서버에 연결하지 못했어요. 지금은 이 기기의 다른 창만 보여요.', 6000);
     else if (info.kind === 'local') this.hud.toast(`${this.player.name}님, 연습 모드예요. 서버 설정이 없어 같은 기기의 다른 창만 서로 보여요.`, 5000);
     else this.hud.toast(`${this.player.name}님, 파팅 라운지예요. 화면을 누르면 안으로 들어가요.`, 5000);
+    const bonus = this.wallet.claimDaily();
+    if (bonus) {
+      this.hud.setCoins(this.wallet.coins);
+      window.setTimeout(() => this.hud.toast(`오늘 첫 방문이라 코인 ${bonus}개를 받았어요. 왼쪽 위 코인을 누르면 옷장이 열려요.`, 5000), 5600);
+    }
     this.renderer.setAnimationLoop(() => this.frame());
+  }
+
+  // ───────── 코인 · 옷장 · 체류 시간 ─────────
+
+  private earn(n: number) {
+    this.wallet.add(n);
+    this.hud.setCoins(this.wallet.coins);
+  }
+
+  /** 화면이 보이는 동안만 불린다. 1분마다 코인을 주고 체류 시간을 서버에 알린다 */
+  private tickStay(dt: number) {
+    this.stay += dt;
+    this.dwell += dt;
+    if (this.stay >= 60) { this.stay -= 60; this.earn(this.mySeat ? 2 : 1); }
+    if (this.dwell >= 60) this.flushDwell();
+  }
+
+  private flushDwell() {
+    if (this.dwell < 5) return;
+    this.stats.dwell(this.dwell);
+    this.dwell = 0;
+  }
+
+  private changeOutfit(outfit: Outfit, bought: Hat | null) {
+    this.wallet.setOutfit(outfit);
+    this.player = Avatar.restyle(this.player, outfit, this.scene);
+    this.hud.setCoins(this.wallet.coins);
+    this.track();
+    if (bought) this.stats.event('wardrobe');
+  }
+
+  /** 지금 있는 방의 미니게임을 연다 */
+  private openGame() {
+    if (!this.zone || this.hud.modalOpen) return;
+    this.task = null;
+    this.player.stop();
+    this.minigame.open(this.zone);
+    this.hud.showGame(true, GAMES[this.zone].name);
+  }
+
+  // ───────── 하루 한 번 OX 퀴즈 ─────────
+
+  /** 광장 왼쪽이면 O(true), 오른쪽이면 X(false), 광장 밖이면 null */
+  private quizSide(): boolean | null {
+    const p = this.player.group.position;
+    if (this.zone !== null || !inRect(PLAZA, p.x, p.z)) return null;
+    return p.x < 0;
+  }
+
+  /** index번 문제까지 전부 맞혔는지 */
+  private quizAlive(index: number) {
+    for (let i = 0; i <= index; i++) if (!this.quizAnswers.get(i)) return false;
+    return true;
+  }
+
+  private updateQuiz() {
+    const test = this.quizTest !== undefined;
+    const ph = quizPhase(Date.now() + clockOffset(), this.quizTest);
+    const key = ph.kind + ('index' in ph ? ph.index : '');
+    if (key !== this.quizKey) { this.quizKey = key; this.onQuizPhase(ph, test); }
+
+    const second = Math.floor(Date.now() / 1000);
+    if (second !== this.quizSecond) {
+      this.quizSecond = second;
+      if (ph.kind === 'idle') this.hud.setQuizChip(Number.isFinite(ph.startsIn) ? `밤 ${QUIZ_HOUR - 12}시 퀴즈까지 ${formatLeft(ph.startsIn)}` : '', false);
+      else if (ph.kind === 'soon') this.hud.setQuizChip(`${test ? '연습 퀴즈' : '퀴즈'} 시작까지 ${formatLeft(ph.startsIn)}`, true);
+      else if (ph.kind === 'done') this.hud.setQuizChip('퀴즈가 끝났어요', false);
+      else this.hud.setQuizChip('퀴즈 진행 중', true);
+    }
+
+    if (ph.kind === 'ask') {
+      const side = this.quizSide();
+      this.hud.setQuizProgress(ph.left / ph.total, side === null ? '광장으로 와서 O는 파란 바닥, X는 분홍 바닥에 서요' : `지금 내 답: ${side ? 'O (파란 바닥)' : 'X (분홍 바닥)'}`);
+    } else if (ph.kind === 'intro') {
+      this.hud.setQuizProgress(0, `${Math.ceil(ph.startsIn / 1000)}초 뒤 첫 문제가 나와요`);
+    } else if (ph.kind === 'reveal') {
+      const n = this.peers.quizAlive(ph.index) + (this.quizAlive(ph.index) ? 1 : 0);
+      this.hud.setQuizProgress(0, `${this.quizHint} · 전부 맞힌 사람 ${n}명`);
+    }
+  }
+
+  private onQuizPhase(ph: QuizPhase, test: boolean) {
+    const label = test ? '연습 퀴즈' : '오늘의 파팅 퀴즈';
+    switch (ph.kind) {
+      case 'idle':
+        this.world.setQuizZones(false);
+        this.hud.setQuizCard(null);
+        break;
+      case 'soon':
+        this.world.setQuizZones(true);
+        this.hud.setQuizCard(null);
+        this.hud.toast(`${formatLeft(ph.startsIn)} 뒤 광장에서 OX 퀴즈가 열려요. O는 파란 바닥, X는 분홍 바닥이에요.`, 7000);
+        break;
+      case 'intro':
+        this.quizAnswers.clear();
+        this.quizPlayed = false;
+        this.quizAsked = -1;
+        this.world.setQuizZones(true);
+        this.hud.closeModals();
+        // 광장에 있으면 파란 바닥과 분홍 바닥이 한눈에 보이게 한 번 물러난다
+        if (!this.intro && !this.diving && this.zone === null && this.controls.distance() < 14) this.zoomTo = 17;
+        this.hud.setQuizCard({ step: label, text: '곧 시작해요! 광장으로 모이세요', hint: '', tone: 'info' });
+        break;
+      case 'ask':
+        this.quizAsked = ph.index;
+        this.world.setQuizZones(true);
+        this.hud.setQuizCard({ step: `${label} ${ph.index + 1} / ${QUIZ_COUNT}`, text: ph.question.q, hint: '', tone: 'ask' });
+        break;
+      case 'reveal': {
+        this.world.setQuizZones(true, ph.question.a);
+        // 문제를 보지 못한 채 정답 공개부터 본 경우(방금 들어왔거나 화면을 꺼 뒀던 경우)는 채점하지 않는다
+        const side = this.quizAsked === ph.index ? this.quizSide() : null;
+        const ok = side !== null && side === ph.question.a;
+        this.quizAnswers.set(ph.index, ok);
+        if (side !== null) {
+          if (!this.quizPlayed) { this.quizPlayed = true; if (!test) this.stats.event('quiz_join'); }
+          this.overlay.say(this.myId, ok ? '⭕ 정답' : '💦 땡');
+          this.send({ t: 'quiz', q: ph.index, ok, alive: this.quizAlive(ph.index) });
+          if (ok) { this.player.play('wave', 1400); if (!test) this.earn(COIN_PER_CORRECT); }
+        }
+        this.quizHint = side === null ? '광장 안에 서 있어야 답으로 쳐요' : ok ? (test ? '정답!' : `정답! 코인 +${COIN_PER_CORRECT}`) : '아쉬워요. 다음 문제를 맞히면 코인은 받아요';
+        this.hud.setQuizCard({ step: `정답은 ${ph.question.a ? 'O' : 'X'}`, text: ph.question.why, hint: this.quizHint, tone: ok ? 'right' : 'wrong' });
+        break;
+      }
+      case 'done':
+        this.world.setQuizZones(false);
+        this.hud.setQuizCard(null);
+        this.finishQuiz(test);
+        break;
+    }
+  }
+
+  private finishQuiz(test: boolean) {
+    if (!this.quizPlayed) return;
+    const right = [...this.quizAnswers.values()].filter(Boolean).length;
+    const perfect = right === QUIZ_COUNT;
+    this.quizPlayed = false;
+    this.quizAnswers.clear();
+    const lines: string[] = [];
+    if (test) {
+      lines.push(`${QUIZ_COUNT}문제 중 ${right}개를 맞혔어요.`, `연습이라 코인과 왕관은 없어요. 진짜 퀴즈는 매일 밤 ${QUIZ_HOUR - 12}시에 열려요.`);
+    } else if (perfect) {
+      this.wallet.grantCrown();
+      this.earn(COIN_PERFECT);
+      this.stats.quizWin(this.player.name);
+      this.stats.event('quiz_perfect');
+      this.changeOutfit({ ...this.player.outfit, hat: 'crown' }, null);
+      window.setTimeout(() => void this.refreshWinners(), 4000);
+      lines.push(`${QUIZ_COUNT}문제를 전부 맞혔어요.`, `우승 왕관을 24시간 동안 쓰고, 코인 ${right * COIN_PER_CORRECT + COIN_PERFECT}개를 받았어요.`, '광장 벽의 퀴즈 안내판에 이름이 올라가요.');
+    } else {
+      lines.push(`코인 ${right * COIN_PER_CORRECT}개를 받았어요.`, `전부 맞히면 왕관을 써요. 내일 밤 ${QUIZ_HOUR - 12}시에 다시 도전해요.`);
+    }
+    this.hud.showResult(true, perfect ? '전부 맞혔어요! 👑' : `${QUIZ_COUNT}문제 중 ${right}개 정답`, lines);
+  }
+
+  /** 광장 벽 안내판에 가장 최근 우승자를 적는다 */
+  private async refreshWinners() {
+    const w = await this.stats.winners();
+    if (!w || !w.count) return;
+    const kst = (ms: number) => new Date(ms + clockOffset() + 9 * 3_600_000).toISOString().slice(0, 10);
+    const when = w.day === kst(Date.now()) ? '오늘' : w.day === kst(Date.now() - 86_400_000) ? '어제' : `${Number(w.day.slice(5, 7))}월 ${Number(w.day.slice(8, 10))}일`;
+    const more = w.count > w.names.length ? ` 외 ${w.count - w.names.length}명` : '';
+    this.world.setQuizBoard(`${when} 우승 ${w.count}명`, w.names.join(' · ') + more);
   }
 
   // ───────── 네트워크 ─────────
@@ -492,13 +694,14 @@ export class Game {
     this.zone = zone;
     const theme = zone ? ROOM_THEMES.find(t => t.id === zone)! : null;
     this.hud.setLocation(theme);
+    this.hud.setPlay(zone ? GAMES[zone].name : null);
     // 멀리서 보고 있다가 방에 들어가면 가까이 당긴다
     if (zone && this.intro) this.dive();
     else if (zone && !this.diving && this.controls.distance() > 13) this.zoomTo = 9;
     if (theme && this.statsData && !this.done.survey && !this.nudged) {
       this.nudged = true;
       this.hud.toast(`${theme.name} 방이에요. 30초 설문에 답하면 다른 사람들 답을 볼 수 있어요.`, 5000);
-    } else if (theme) this.hud.toast(`${theme.name} 방이에요. 벽의 QR을 찍으면 이번 주 파티가 보여요.`, 3600);
+    } else if (theme) this.hud.toast(`${theme.name} 방이에요. 이번 주 파티는 '파티 보기'에서 볼 수 있어요.`, 3600);
     else this.hud.toast('광장이에요. 방 목록에서 다른 파티를 골라요.', 2400);
     this.track();
     this.refreshRoomCards();
@@ -654,7 +857,9 @@ export class Game {
     // 로컬 모드는 주기적 신호로 살아 있음을 알린다. 서버 모드는 Presence가 대신한다
     if (this.net?.kind === 'local' && now - this.lastTrack > TRACK_MS) this.track();
 
-    if (now - this.lastStats > 60000) { this.lastStats = now; void this.stats.load().then(s => this.applyStats(s)); void this.refreshGuestbook(); }
+    if (now - this.lastStats > 60000) { this.lastStats = now; void this.stats.load().then(s => this.applyStats(s)); void this.refreshGuestbook(); void this.refreshWinners(); }
+    this.tickStay(dt);
+    this.updateQuiz();
     this.updateBots(dt);
     this.peers.update(dt, now, this.net?.kind === 'local' ? LOCAL_EXPIRE_MS : null);
     this.world.update(dt);

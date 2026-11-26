@@ -17,6 +17,8 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
 
 const fmt = (n: number) => n.toLocaleString('ko-KR');
 
+const duration = (sec: number) => (sec >= 60 ? `${Math.floor(sec / 60)}분 ${Math.round(sec % 60)}초` : `${Math.round(sec)}초`);
+
 function card(label: string, value: string, hint: string) {
   const c = el('div', 'host-card');
   c.append(el('small', undefined, label), el('strong', undefined, value), el('span', undefined, hint));
@@ -77,12 +79,17 @@ function render(root: HTMLElement, s: Stats | null) {
     card('방문자', fmt(s.visitors), '브라우저 기준'),
     card('오늘 방문', fmt(s.today), '한국 시간 기준'),
     card('설문 응답', fmt(s.surveyCount), '응답자 수'),
+    card('평균 체류', s.dwellAvg ? duration(s.dwellAvg) : '-', '방문 한 번에 머문 시간'),
+    card('파티 보기 클릭', fmt(s.events.party_click ?? 0), '파팅으로 넘어간 사람'),
+    card('퀴즈 참여', fmt(s.events.quiz_join ?? 0), '밤 9시 OX 퀴즈'),
+    card('모자 구매', fmt(s.events.wardrobe ?? 0), '코인을 모아 꾸민 사람'),
   );
   root.appendChild(cards);
 
   const grid = el('div', 'host-grid');
   grid.appendChild(dailyChart(s.daily));
   grid.appendChild(barList('열리면 가겠다고 누른 수', ROOM_THEMES.map(t => ({ key: t.id, label: t.name })), s.interest));
+  grid.appendChild(barList('방별 미니게임을 한 사람', ROOM_THEMES.map(t => ({ key: t.id, label: t.name })), Object.fromEntries(ROOM_THEMES.map(t => [t.id, s.events[`game_${t.id}`] ?? 0]))));
   grid.appendChild(topCombos(s.cross));
   for (const q of QUESTIONS) grid.appendChild(barList(q.hostTitle, q.choices, s.survey[q.id]));
   root.appendChild(grid);

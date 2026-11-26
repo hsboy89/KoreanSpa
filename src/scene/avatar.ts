@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 export type Pose = 'idle' | 'walk' | 'sit';
 export type Emote = 'wave' | 'cheers';
-export type Hat = 'none' | 'cap' | 'beanie';
+export type Hat = 'none' | 'cap' | 'beanie' | 'party' | 'ears' | 'headphones' | 'halo' | 'crown';
 
 export interface Outfit { top: number; bottom: number; hair: number; skin: number; hat: Hat; hatColor: number }
 
@@ -84,7 +84,7 @@ export class Avatar {
     back.position.y = 0.03;
     const bang = new THREE.Mesh(new THREE.SphereGeometry(0.15, 12, 10), hairMat);
     bang.position.set(0.1, 0.17, 0.3); bang.scale.set(1.5, 0.6, 0.6);
-    bang.visible = outfit.hat === 'none';
+    bang.visible = outfit.hat !== 'cap' && outfit.hat !== 'beanie';
     const earGeo = new THREE.SphereGeometry(0.07, 10, 8);
     const eL = new THREE.Mesh(earGeo, skin); eL.position.set(-0.36, -0.02, 0);
     const eR = eL.clone(); eR.position.x = 0.36;
@@ -121,12 +121,80 @@ export class Avatar {
       const pom = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 }));
       pom.position.y = 0.46;
       this.head.add(dome, band, pom);
+    } else if (outfit.hat === 'party') {
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.17, 0.42, 18), new THREE.MeshStandardMaterial({ color: 0xff385c, roughness: 0.6 }));
+      cone.position.set(-0.08, 0.52, 0.02); cone.rotation.z = 0.22;
+      const pom = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), new THREE.MeshStandardMaterial({ color: 0xffd166, roughness: 0.8 }));
+      pom.position.set(-0.125, 0.73, 0.02);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.165, 0.022, 6, 18), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 }));
+      rim.rotation.x = Math.PI / 2; rim.rotation.y = 0.22; rim.position.set(-0.035, 0.325, 0.02);
+      this.head.add(cone, pom, rim);
+    } else if (outfit.hat === 'ears') {
+      const earMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2e, roughness: 0.9 });
+      const inner = new THREE.MeshStandardMaterial({ color: 0xff9bb0, roughness: 0.9 });
+      for (const sx of [-1, 1]) {
+        const ear = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.19, 4), earMat);
+        ear.position.set(sx * 0.2, 0.37, 0.02); ear.rotation.set(0, Math.PI / 4, -sx * 0.3);
+        const pad = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.11, 4), inner);
+        pad.position.set(sx * 0.195, 0.355, 0.055); pad.rotation.copy(ear.rotation);
+        this.head.add(ear, pad);
+      }
+    } else if (outfit.hat === 'headphones') {
+      const hpMat = new THREE.MeshStandardMaterial({ color: 0x1f1f24, roughness: 0.5, metalness: 0.3 });
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.028, 8, 24, Math.PI), hpMat);
+      band.position.y = 0.0;
+      this.head.add(band);
+      for (const sx of [-1, 1]) {
+        const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.09, 16), hpMat);
+        cup.rotation.z = Math.PI / 2; cup.position.set(sx * 0.4, -0.02, 0);
+        const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.1, 16), new THREE.MeshStandardMaterial({ color: 0xff385c, roughness: 0.5 }));
+        ring.rotation.z = Math.PI / 2; ring.position.copy(cup.position);
+        this.head.add(cup, ring);
+      }
+    } else if (outfit.hat === 'halo') {
+      const halo = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.03, 8, 28), new THREE.MeshBasicMaterial({ color: 0xffe27a }));
+      halo.rotation.x = Math.PI / 2; halo.position.y = 0.56;
+      this.head.add(halo);
+    } else if (outfit.hat === 'crown') {
+      const gold = new THREE.MeshStandardMaterial({ color: 0xffc93c, roughness: 0.35, metalness: 0.6, emissive: 0x5a3c00 });
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.19, 0.12, 20, 1, true), gold);
+      band.material.side = THREE.DoubleSide;
+      band.position.y = 0.4;
+      this.head.add(band);
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        const spike = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.13, 4), gold);
+        spike.position.set(Math.sin(a) * 0.195, 0.52, Math.cos(a) * 0.195);
+        this.head.add(spike);
+      }
+      const gem = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff385c }));
+      gem.position.set(0, 0.4, 0.2);
+      this.head.add(gem);
     }
 
     this.body.add(torso, lL, lR, aL, aR, this.hand, this.head);
     this.legs = [lL, lR];
     this.arms = [aL, aR];
     this.eyes = [eyeL, eyeR];
+  }
+
+  /** 같은 자리, 같은 자세로 옷만 바꾼 새 아바타를 만든다. 옛 아바타는 장면에서 빼고 자원을 푼다 */
+  static restyle(old: Avatar, outfit: Outfit, scene: THREE.Scene): Avatar {
+    const a = new Avatar(old.name, outfit);
+    a.group.position.copy(old.group.position);
+    a.group.rotation.y = old.group.rotation.y;
+    a.speed = old.speed;
+    a.setPose(old.pose);
+    a.path = old.path;
+    scene.remove(old.group);
+    old.group.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      m.geometry.dispose();
+      (Array.isArray(m.material) ? m.material : [m.material]).forEach(x => x.dispose());
+    });
+    scene.add(a.group);
+    return a;
   }
 
   hold(obj: THREE.Object3D | null) {

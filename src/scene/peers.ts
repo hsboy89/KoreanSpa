@@ -12,6 +12,8 @@ interface Remote {
   /** 키보드 이동 중인 사람의 보간 목표 */
   posTarget: THREE.Vector3 | null;
   posAt: number;
+  /** 마지막으로 알려 온 OX 퀴즈 결과 */
+  quiz?: { q: number; alive: boolean };
 }
 
 /** 다른 접속자들의 아바타를 받은 메시지대로 움직인다 */
@@ -35,6 +37,13 @@ export class Peers {
     return n;
   }
 
+  /** q번 문제까지 전부 맞힌 사람 수 */
+  quizAlive(q: number) {
+    let n = 0;
+    for (const r of this.map.values()) if (r.quiz && r.quiz.q === q && r.quiz.alive) n++;
+    return n;
+  }
+
   takenSeats(): Set<number> {
     const s = new Set<number>();
     for (const r of this.map.values()) if (r.state.seat !== null) s.add(r.state.seat);
@@ -50,6 +59,7 @@ export class Peers {
         if (!state) return;
         if (!r) { this.add(m.id, state, now); return; }
         r.lastSeen = now;
+        if (JSON.stringify(r.state.outfit) !== JSON.stringify(state.outfit)) r.avatar = Avatar.restyle(r.avatar, state.outfit, this.scene);
         r.state = state;
         if (state.seat !== null) { this.seat(r, state.seat); }
         else if (!r.avatar.moving && !r.posTarget) {
@@ -99,6 +109,13 @@ export class Peers {
         break;
       case 'say':
         if (r && isSayable(m.text)) { r.lastSeen = now; this.onSay(m.id, m.text); }
+        break;
+      case 'quiz':
+        if (r && Number.isInteger(m.q) && m.q >= 0 && m.q < 50 && typeof m.ok === 'boolean' && typeof m.alive === 'boolean') {
+          r.lastSeen = now;
+          r.quiz = { q: m.q, alive: m.alive };
+          this.onSay(m.id, m.ok ? '⭕ 정답' : '💦 땡');
+        }
         break;
       case 'bye':
         if (r) this.remove(m.id);

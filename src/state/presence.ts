@@ -54,7 +54,7 @@ export function isSayable(text: unknown): text is string {
   return typeof text === 'string' && SAYABLE.has(text);
 }
 
-const HATS: Hat[] = ['none', 'cap', 'beanie'];
+const HATS: Hat[] = ['none', 'cap', 'beanie', 'party', 'ears', 'headphones', 'halo', 'crown'];
 const num = (v: unknown, lo: number, hi: number) => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
 const color = (v: unknown) => num(v, 0, 0xffffff) ? (v as number) : null;
 

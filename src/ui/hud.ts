@@ -11,6 +11,21 @@ export interface HudHandlers {
   onOpenLounges(): void;
   onInterest(): void;
   onPickLounge(n: number): void;
+  /** 파팅으로 가는 링크를 눌렀을 때 */
+  onPartyClick(): void;
+  onOpenWardrobe(): void;
+  /** 방 안의 게임 버튼을 눌렀을 때 */
+  onPlay(): void;
+  /** 게임 창이 닫혔을 때(닫기 버튼, 바깥 클릭, Esc, 퀴즈 시작) */
+  onGameClosed(): void;
+}
+
+export interface QuizCard {
+  step: string;
+  text: string;
+  hint: string;
+  /** ask: 답을 고르는 중, right/wrong: 내 결과, info: 안내 */
+  tone: 'ask' | 'right' | 'wrong' | 'info';
 }
 
 export interface RoomCard { theme: RoomTheme; count: number }
@@ -63,17 +78,47 @@ export class Hud {
           <button id="sound-btn" aria-pressed="false" aria-label="소리 켜기" title="소리">${svg(ICON.sound)}</button>
           <button id="help-btn" aria-label="도움말" title="도움말">${svg(ICON.help)}</button>
         </div>
+        <div class="status">
+          <button class="pill coin-pill" id="coin-btn" aria-label="옷장 열기"><i class="coin" aria-hidden="true"></i><b id="coins">0</b><span>옷장</span></button>
+          <span class="pill" id="quiz-chip"></span>
+        </div>
       </header>
+      <section id="quiz" class="panel quiz" aria-live="polite" hidden>
+        <small id="quiz-step"></small>
+        <strong id="quiz-text"></strong>
+        <div class="quiz-track"><i id="quiz-bar"></i></div>
+        <p id="quiz-hint"></p>
+      </section>
       <div id="toast" class="toast" role="status" hidden></div>
       <nav class="panel bar" aria-label="동작">
         ${ACTIONS.map(a => `<button data-action="${a.id}" aria-label="${a.label}">${svg(a.icon)}<span>${a.label}</span><kbd>${a.key}</kbd></button>`).join('')}
       </nav>
       <button id="interest" class="interest" hidden></button>
+      <button id="play" class="play" hidden></button>
+      <div id="game" class="modal" hidden>
+        <div class="panel modal-card survey-card" role="dialog" aria-modal="true" aria-labelledby="game-title">
+          <div class="modal-head"><h2 id="game-title"></h2><button id="game-close" class="icon-btn" aria-label="닫기">✕</button></div>
+          <div id="game-body"></div>
+        </div>
+      </div>
       <div id="rooms" class="modal" hidden>
         <div class="panel modal-card rooms-card" role="dialog" aria-modal="true" aria-labelledby="rooms-title">
           <div class="modal-head"><h2 id="rooms-title">어떤 파티가 끌려요?</h2><button id="rooms-close" class="icon-btn" aria-label="닫기">✕</button></div>
-          <p>방에 들어가면 벽의 QR로 그 카테고리의 이번 주 파티를 볼 수 있어요.</p>
+          <p>방에 들어가면 '파티 보기'로 그 카테고리의 이번 주 파티를 볼 수 있어요.</p>
           <div id="rooms-list" class="rooms-list"></div>
+        </div>
+      </div>
+      <div id="wardrobe" class="modal" hidden>
+        <div class="panel modal-card survey-card" role="dialog" aria-modal="true" aria-labelledby="wardrobe-title">
+          <div class="modal-head"><h2 id="wardrobe-title">옷장</h2><button id="wardrobe-close" class="icon-btn" aria-label="닫기">✕</button></div>
+          <div id="wardrobe-body"></div>
+        </div>
+      </div>
+      <div id="result" class="modal" hidden>
+        <div class="panel modal-card" role="dialog" aria-modal="true" aria-labelledby="result-title">
+          <div class="modal-head"><h2 id="result-title"></h2><button id="result-close" class="icon-btn" aria-label="닫기">✕</button></div>
+          <div id="result-body"></div>
+          <div class="modal-foot"><a class="btn solid" href="${PARTING_URL}" target="_blank" rel="noopener noreferrer">이번 주 파티 보기 ↗</a></div>
         </div>
       </div>
       <div id="guestbook" class="modal" hidden>
@@ -106,14 +151,14 @@ export class Hud {
       <div id="help" class="modal" hidden>
         <div class="panel modal-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
           <div class="modal-head"><h2 id="help-title">파팅 라운지</h2><button id="help-close" class="icon-btn" aria-label="닫기">✕</button></div>
-          <p>파팅의 파티 카테고리를 둘러보는 공간이에요. 지금 들어와 있는 사람들이 그대로 보여요.<br>각 방 벽에 걸린 QR을 폰으로 찍으면 파팅으로 이어져요.</p>
+          <p>파팅의 파티 카테고리를 둘러보는 공간이에요. 지금 들어와 있는 사람들이 그대로 보여요.<br>아래 버튼을 누르면 파팅으로 이어져요.</p>
           <p>바닥 클릭 · WASD · 방향키로 이동<br>드래그로 둘러보기 · 휠과 두 손가락으로 확대/축소<br>1 방 목록 · 2 앉기 · 3 인사 · 4 건배 · 5 말하기 · 6 설문 · 7 방명록</p>
           <div class="modal-foot"><a class="btn solid" href="${PARTING_URL}" target="_blank" rel="noopener noreferrer">parting.io 열기 ↗</a></div>
         </div>
       </div>`;
     parent.appendChild(this.root);
 
-    for (const id of ['presence', 'where', 'where-name', 'where-sub', 'where-link', 'sound-btn', 'help-btn', 'toast', 'rooms', 'rooms-list', 'rooms-close', 'say', 'say-close', 'help', 'help-close', 'brand', 'brand-caret', 'lounges', 'lounges-list', 'lounges-close', 'interest', 'survey', 'survey-body', 'survey-close', 'guestbook', 'guestbook-body', 'guestbook-close']) {
+    for (const id of ['presence', 'where', 'where-name', 'where-sub', 'where-link', 'sound-btn', 'help-btn', 'toast', 'rooms', 'rooms-list', 'rooms-close', 'say', 'say-close', 'help', 'help-close', 'brand', 'brand-caret', 'lounges', 'lounges-list', 'lounges-close', 'interest', 'survey', 'survey-body', 'survey-close', 'guestbook', 'guestbook-body', 'guestbook-close', 'coin-btn', 'coins', 'quiz-chip', 'quiz', 'quiz-step', 'quiz-text', 'quiz-bar', 'quiz-hint', 'wardrobe', 'wardrobe-body', 'wardrobe-close', 'result', 'result-title', 'result-body', 'result-close', 'play', 'game', 'game-title', 'game-body', 'game-close']) {
       this.els[id] = this.root.querySelector<HTMLElement>(`#${id}`)!;
     }
 
@@ -121,6 +166,16 @@ export class Hud {
       b.addEventListener('click', () => handlers.onAction(b.dataset.action as ActionId));
     });
     this.els['sound-btn'].addEventListener('click', () => handlers.onSound());
+    this.root.querySelectorAll<HTMLAnchorElement>('a[target="_blank"]').forEach(a => a.addEventListener('click', () => handlers.onPartyClick()));
+    this.els['coin-btn'].addEventListener('click', () => handlers.onOpenWardrobe());
+    this.onGameClosed = handlers.onGameClosed;
+    this.els['play'].addEventListener('click', () => handlers.onPlay());
+    this.els['game-close'].addEventListener('click', () => this.showGame(false));
+    // 게임 창은 빠르게 누르다 바깥을 건드려도 닫히지 않게 닫기 버튼으로만 닫는다
+    this.els['wardrobe-close'].addEventListener('click', () => this.showWardrobe(false));
+    this.els['wardrobe'].addEventListener('click', e => { if (e.target === this.els['wardrobe']) this.showWardrobe(false); });
+    this.els['result-close'].addEventListener('click', () => this.showResult(false));
+    this.els['result'].addEventListener('click', e => { if (e.target === this.els['result']) this.showResult(false); });
     this.els['help-btn'].addEventListener('click', () => this.showHelp(true));
     this.els['help-close'].addEventListener('click', () => this.showHelp(false));
     this.els['help'].addEventListener('click', e => { if (e.target === this.els['help']) this.showHelp(false); });
@@ -157,7 +212,60 @@ export class Hud {
     });
   }
 
-  get modalOpen() { return !this.els['help'].hidden || !this.els['rooms'].hidden || !this.els['say'].hidden || !this.els['lounges'].hidden || !this.els['survey'].hidden || !this.els['guestbook'].hidden; }
+  private onGameClosed: () => void = () => {};
+  /** 방 안에서 보이는 게임 버튼. null이면 숨긴다 */
+  setPlay(name: string | null) {
+    this.els['play'].hidden = !name;
+    if (name) this.els['play'].textContent = `🎮 ${name} 한 판`;
+    this.root.classList.toggle('has-play', !!name);
+  }
+  showGame(open: boolean, title = '') {
+    const was = !this.els['game'].hidden;
+    this.els['game'].hidden = !open;
+    if (open) this.els['game-title'].textContent = title;
+    else if (was) this.onGameClosed();
+  }
+  get gameBody() { return this.els['game-body']; }
+
+  get modalOpen() { return !this.els['game'].hidden || !this.els['wardrobe'].hidden || !this.els['result'].hidden || !this.els['help'].hidden || !this.els['rooms'].hidden || !this.els['say'].hidden || !this.els['lounges'].hidden || !this.els['survey'].hidden || !this.els['guestbook'].hidden; }
+  showWardrobe(open: boolean) { this.els['wardrobe'].hidden = !open; }
+  get wardrobeBody() { return this.els['wardrobe-body']; }
+  setCoins(n: number) { this.els['coins'].textContent = n.toLocaleString('ko-KR'); }
+
+  /** 상단의 퀴즈 안내 칩. hot이면 곧 시작하거나 진행 중이라는 뜻으로 강조한다 */
+  setQuizChip(text: string, hot: boolean) {
+    const c = this.els['quiz-chip'];
+    if (c.textContent !== text) c.textContent = text;
+    c.classList.toggle('is-hot', hot);
+  }
+
+  /** 퀴즈 문제 카드. null이면 숨긴다 */
+  setQuizCard(card: QuizCard | null) {
+    const q = this.els['quiz'];
+    q.hidden = !card;
+    if (!card) return;
+    q.dataset.tone = card.tone;
+    this.els['quiz-step'].textContent = card.step;
+    this.els['quiz-text'].textContent = card.text;
+    this.els['quiz-hint'].textContent = card.hint;
+    // 문제 카드가 같은 자리를 쓰므로 떠 있던 안내는 치운다
+    this.els['toast'].hidden = true;
+  }
+  /** 남은 시간 막대(0~1)와 그 아래 한 줄 */
+  setQuizProgress(frac: number, hint: string) {
+    this.els['quiz-bar'].style.transform = `scaleX(${Math.max(0, Math.min(1, frac)).toFixed(3)})`;
+    if (this.els['quiz-hint'].textContent !== hint) this.els['quiz-hint'].textContent = hint;
+  }
+
+  showResult(open: boolean, title = '', lines: string[] = []) {
+    this.els['result'].hidden = !open;
+    if (!open) return;
+    this.els['result-title'].textContent = title;
+    const body = this.els['result-body'];
+    body.textContent = '';
+    for (const line of lines) { const p = document.createElement('p'); p.textContent = line; body.appendChild(p); }
+  }
+
   showGuestbook(open: boolean) { this.els['guestbook'].hidden = !open; }
   get guestbookBody() { return this.els['guestbook-body']; }
   setGuestbookEnabled(on: boolean) { this.root.querySelector<HTMLElement>('[data-action="guestbook"]')!.hidden = !on; }
@@ -205,7 +313,7 @@ export class Hud {
   showHelp(open: boolean) { this.els['help'].hidden = !open; }
   showRooms(open: boolean) { this.els['rooms'].hidden = !open; }
   showSay(open: boolean) { this.els['say'].hidden = !open; }
-  closeModals() { this.showHelp(false); this.showRooms(false); this.showSay(false); this.showLounges(false); this.showSurvey(false); this.showGuestbook(false); }
+  closeModals() { this.showHelp(false); this.showRooms(false); this.showSay(false); this.showLounges(false); this.showSurvey(false); this.showGuestbook(false); this.showWardrobe(false); this.showResult(false); this.showGame(false); }
 
   private lounge = 0;
   private capacity = 0;
@@ -223,7 +331,7 @@ export class Hud {
   setLocation(theme: RoomTheme | null) {
     this.els['where'].classList.toggle('in-room', !!theme);
     this.els['where-name'].textContent = theme ? theme.name : '광장';
-    this.els['where-sub'].textContent = theme ? '벽의 QR을 찍으면 이번 주 파티가 보여요' : '방 목록에서 가고 싶은 파티를 골라요';
+    this.els['where-sub'].textContent = theme ? '파티 보기를 누르면 이번 주 파티가 보여요' : '방 목록에서 가고 싶은 파티를 골라요';
   }
 
   setRooms(cards: RoomCard[]) {
@@ -255,6 +363,8 @@ export class Hud {
   }
 
   toast(msg: string, ms = 2800) {
+    // 퀴즈 문제가 떠 있는 동안에는 같은 자리를 쓰는 안내를 띄우지 않는다
+    if (!this.els['quiz'].hidden) return;
     const t = this.els['toast'];
     t.textContent = msg;
     t.hidden = false;

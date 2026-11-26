@@ -1,4 +1,4 @@
--- 파팅 라운지: 방문 집계, 방별 "열리면 갈래요", 설문
+-- 파팅 라운지: 방문 집계, 체류 시간, 방별 "열리면 갈래요", 설문, 방명록, 행동 집계, 퀴즈 우승 기록
 -- Supabase SQL Editor에서 이 파일 전체를 한 번 실행한다. 여러 번 실행해도 안전하다.
 --
 -- 테이블은 RLS로 잠그고 직접 읽기/쓰기를 막는다. 브라우저는 아래 함수(RPC)로만 접근하고,
@@ -34,6 +34,35 @@ create table if not exists public.lounge_survey (
   updated_at timestamptz not null default now()
 );
 
+-- 그날 머문 시간(초). 브라우저가 1분마다 더해 달라고 알려 온다
+alter table public.lounge_visits add column if not exists seconds integer not null default 0;
+
+-- 뒤에서 세는 행동. 같은 사람의 같은 행동은 하루에 한 번만 센다
+create table if not exists public.lounge_events (
+  visitor_id uuid not null,
+  day date not null,
+  kind text not null check (kind in (
+    'party_click', 'quiz_join', 'quiz_perfect', 'wardrobe',
+    'game_wine', 'game_board', 'game_rooftop', 'game_run', 'game_book', 'game_club'
+  )),
+  created_at timestamptz not null default now(),
+  primary key (visitor_id, day, kind)
+);
+
+-- 그날 퀴즈를 전부 맞힌 사람
+create table if not exists public.lounge_quiz_winners (
+  visitor_id uuid not null,
+  day date not null,
+  name text not null check (char_length(name) between 1 and 16),
+  created_at timestamptz not null default now(),
+  primary key (visitor_id, day)
+);
+
+alter table public.lounge_events enable row level security;
+alter table public.lounge_quiz_winners enable row level security;
+revoke all on public.lounge_events from anon, authenticated;
+revoke all on public.lounge_quiz_winners from anon, authenticated;
+
 alter table public.lounge_visits enable row level security;
 alter table public.lounge_interest enable row level security;
 alter table public.lounge_survey enable row level security;
@@ -52,6 +81,75 @@ as $$
   insert into public.lounge_visits (visitor_id, day)
   values (p_visitor, (now() at time zone 'Asia/Seoul')::date)
   on conflict do nothing;
+$$;
+
+-- 한 번에 최대 2분, 하루 최대 6시간까지만 쌓인다
+create or replace function public.lounge_dwell(p_visitor uuid, p_seconds integer)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  insert into public.lounge_visits (visitor_id, day, seconds)
+  values (p_visitor, (now() at time zone 'Asia/Seoul')::date, least(greatest(coalesce(p_seconds, 0), 0), 120))
+  on conflict (visitor_id, day) do update
+    set seconds = least(public.lounge_visits.seconds + excluded.seconds, 21600);
+$$;
+
+create or replace function public.lounge_event(p_visitor uuid, p_kind text)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  insert into public.lounge_events (visitor_id, day, kind)
+  values (p_visitor, (now() at time zone 'Asia/Seoul')::date, p_kind)
+  on conflict do nothing;
+$$;
+
+-- 퀴즈가 열리는 밤 9시대 앞 15분 동안만 받는다. 결과: 'ok' | 'closed'
+-- 이름은 라운지가 지어 주는 "느긋한 참가자 12" 꼴만 그대로 받고, 그 밖의 글자는 '파팅 방문자'로 바꾼다.
+create or replace function public.lounge_quiz_win(p_visitor uuid, p_name text)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  t timestamp := now() at time zone 'Asia/Seoul';
+  n text := btrim(coalesce(p_name, ''));
+begin
+  if extract(hour from t) <> 21 or extract(minute from t) > 15 then
+    return 'closed';
+  end if;
+  if n !~ '^(느긋한|수줍은|신나는|다정한|호기심 많은|말없는|유쾌한|차분한|반가운) (참가자|호스트|뉴비|단골|방문자|친구|이웃) [0-9]{1,2}$' then
+    n := '파팅 방문자';
+  end if;
+  insert into public.lounge_quiz_winners (visitor_id, day, name)
+  values (p_visitor, t::date, n)
+  on conflict do nothing;
+  return 'ok';
+end;
+$$;
+
+-- 가장 최근에 우승자가 나온 날의 인원과 이름 5명. 없으면 null
+create or replace function public.lounge_quiz_latest()
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'day', d.day,
+    'count', (select count(*) from public.lounge_quiz_winners w where w.day = d.day),
+    'names', (
+      select coalesce(jsonb_agg(x.name), '[]'::jsonb)
+      from (select name from public.lounge_quiz_winners w where w.day = d.day order by created_at limit 5) x
+    )
+  )
+  from (select max(day) as day from public.lounge_quiz_winners) d
+  where d.day is not null;
 $$;
 
 create or replace function public.lounge_interest_add(p_visitor uuid, p_room text)
@@ -101,6 +199,12 @@ security definer
 set search_path = public
 as $$
   select jsonb_build_object(
+    'now', floor(extract(epoch from now()) * 1000),
+    'dwellAvg', coalesce((select round(avg(seconds)) from public.lounge_visits where seconds > 0), 0),
+    'events', coalesce((
+      select jsonb_object_agg(e.kind, e.n)
+      from (select kind, count(*) as n from public.lounge_events group by kind) e
+    ), '{}'::jsonb),
     'visits', (select count(*) from public.lounge_visits),
     'visitors', (select count(distinct visitor_id) from public.lounge_visits),
     'today', (select count(*) from public.lounge_visits where day = (now() at time zone 'Asia/Seoul')::date),
@@ -140,6 +244,15 @@ as $$
     ), '{}'::jsonb)
   );
 $$;
+
+revoke execute on function public.lounge_dwell(uuid, integer) from public;
+revoke execute on function public.lounge_event(uuid, text) from public;
+revoke execute on function public.lounge_quiz_win(uuid, text) from public;
+revoke execute on function public.lounge_quiz_latest() from public;
+grant execute on function public.lounge_dwell(uuid, integer) to anon, authenticated;
+grant execute on function public.lounge_event(uuid, text) to anon, authenticated;
+grant execute on function public.lounge_quiz_win(uuid, text) to anon, authenticated;
+grant execute on function public.lounge_quiz_latest() to anon, authenticated;
 
 revoke execute on function public.lounge_visit(uuid) from public;
 revoke execute on function public.lounge_interest_add(uuid, text) from public;
