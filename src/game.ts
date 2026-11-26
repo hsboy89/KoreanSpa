@@ -165,9 +165,10 @@ export class Game {
       onPlay: () => this.openGame(),
       onGameClosed: () => this.minigame.close(),
     });
-    this.minigame = new MiniGamePanel(this.hud.gameBody, (game, coins) => {
+    this.minigame = new MiniGamePanel(this.hud.gameBody, (game, score, coins) => {
       if (coins) this.earn(coins);
       this.stats.event(`game_${game.id}`);
+      if (score > 0) void this.stats.submitScore(game.id, score, this.player.name).then(r => this.applyRankings(r));
     });
     this.wardrobe = new WardrobePanel(this.hud.wardrobeBody, this.wallet, () => this.player.outfit, (o, bought) => this.changeOutfit(o, bought));
     this.hud.setCoins(this.wallet.coins);
@@ -200,6 +201,7 @@ export class Game {
     void this.stats.visit().then(s => this.applyStats(s));
     void this.refreshGuestbook();
     void this.refreshWinners();
+    void this.refreshRankings();
     return { kind: net.kind, offline, full, lounge };
   }
 
@@ -245,12 +247,27 @@ export class Game {
     if (bought) this.stats.event('wardrobe');
   }
 
+  private async refreshRankings() {
+    this.applyRankings(await this.stats.rankings());
+  }
+
+  /** 오늘의 순위를 게임 창과 방 벽 순위판에 반영한다. 서버 함수가 없으면 아무것도 보여주지 않는다 */
+  private applyRankings(r: Awaited<ReturnType<typeof this.stats.rankings>>) {
+    if (!r) return;
+    this.minigame.setRankings(r);
+    for (const theme of ROOM_THEMES) {
+      const game = GAMES[theme.id];
+      this.world.setRanking(theme.id, game.name, (r[theme.id]?.top ?? []).slice(0, 3).map(t => [t.name, game.format(t.score)]));
+    }
+  }
+
   /** 지금 있는 방의 미니게임을 연다 */
   private openGame() {
     if (!this.zone || this.hud.modalOpen) return;
     this.task = null;
     this.player.stop();
     this.minigame.open(this.zone);
+    void this.refreshRankings();
     this.hud.showGame(true, GAMES[this.zone].name);
   }
 
@@ -864,7 +881,7 @@ export class Game {
     // 로컬 모드는 주기적 신호로 살아 있음을 알린다. 서버 모드는 Presence가 대신한다
     if (this.net?.kind === 'local' && now - this.lastTrack > TRACK_MS) this.track();
 
-    if (now - this.lastStats > 60000) { this.lastStats = now; void this.stats.load().then(s => this.applyStats(s)); void this.refreshGuestbook(); void this.refreshWinners(); }
+    if (now - this.lastStats > 60000) { this.lastStats = now; void this.stats.load().then(s => this.applyStats(s)); void this.refreshGuestbook(); void this.refreshWinners(); void this.refreshRankings(); }
     this.tickStay(dt);
     this.updateQuiz();
     this.updateBots(dt);

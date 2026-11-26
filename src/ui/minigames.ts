@@ -3,6 +3,7 @@
  * 기록은 이 브라우저에만 남는다. 새 게임은 GAMES에 방 id로 추가한다.
  */
 import type { RoomId } from '../scene/rooms';
+import type { RankInfo, Rankings } from '../state/stats';
 
 export interface GameResult {
   /** 높을수록 좋은 점수. 내 최고 기록 비교에 쓴다 */
@@ -14,7 +15,11 @@ export interface GameResult {
 }
 
 type Start = (stage: HTMLElement, done: (r: GameResult) => void) => () => void;
-export interface MiniGame { id: RoomId; name: string; how: string; start: Start }
+export interface MiniGame {
+  id: RoomId; name: string; how: string; start: Start;
+  /** 순위표에 적을 점수 표기 */
+  format(score: number): string;
+}
 
 /** 한 판에 받을 수 있는 최대 코인과, 하루에 코인을 받을 수 있는 판 수(게임별) */
 const MAX_COINS = 8;
@@ -332,12 +337,12 @@ const rhythm: Start = (stage, done) => {
 };
 
 export const GAMES: Record<RoomId, MiniGame> = {
-  wine: { id: 'wine', name: '정량 따르기', how: '버튼을 누르고 있으면 와인이 따라져요. 선에 딱 맞을 때 손을 떼요. 3잔을 따라요.', start: pour },
-  board: { id: 'board', name: '주사위 높낮이', how: '다음 주사위 두 개의 합이 지금보다 높을지 낮을지 맞혀요. 같으면 통과예요. 10연속이 끝이에요.', start: dice },
-  rooftop: { id: 'rooftop', name: '별똥별 잡기', how: '밤하늘에 떨어지는 별을 20초 동안 눌러서 잡아요.', start: stars },
-  run: { id: 'run', name: '100m 달리기', how: '왼발과 오른발을 번갈아 빠르게 눌러 100m를 달려요. 키보드는 ← → 키예요.', start: sprint },
-  book: { id: 'book', name: '초성 퀴즈', how: '초성만 보고 책 제목을 골라요. 5문제이고 문제마다 8초예요.', start: chosung },
-  club: { id: 'club', name: '리듬 탭', how: '내려오는 동그라미가 선에 닿는 순간 눌러요. 키보드는 스페이스바예요.', start: rhythm },
+  wine: { id: 'wine', name: '정량 따르기', how: '버튼을 누르고 있으면 와인이 따라져요. 선에 딱 맞을 때 손을 떼요. 3잔을 따라요.', start: pour, format: n => `${n}점` },
+  board: { id: 'board', name: '주사위 높낮이', how: '다음 주사위 두 개의 합이 지금보다 높을지 낮을지 맞혀요. 같으면 통과예요. 10연속이 끝이에요.', start: dice, format: n => `${n}연속` },
+  rooftop: { id: 'rooftop', name: '별똥별 잡기', how: '밤하늘에 떨어지는 별을 20초 동안 눌러서 잡아요.', start: stars, format: n => `별 ${n}개` },
+  run: { id: 'run', name: '100m 달리기', how: '왼발과 오른발을 번갈아 빠르게 눌러 100m를 달려요. 키보드는 ← → 키예요.', start: sprint, format: n => `${(30 - n / 10).toFixed(1)}초` },
+  book: { id: 'book', name: '초성 퀴즈', how: '초성만 보고 책 제목을 골라요. 5문제이고 문제마다 8초예요.', start: chosung, format: n => `${Math.round(n / 20)}문제` },
+  club: { id: 'club', name: '리듬 탭', how: '내려오는 동그라미가 선에 닿는 순간 눌러요. 키보드는 스페이스바예요.', start: rhythm, format: n => `${n}점` },
 };
 
 // ───────── 기록 (이 브라우저에만) ─────────
@@ -357,8 +362,44 @@ export class MiniGamePanel {
   private stop: (() => void) | null = null;
   private game: MiniGame | null = null;
 
+  private ranks: Rankings | null = null;
+  private rankBox: HTMLElement | null = null;
+
   /** @param onFinish 한 판이 끝났을 때. coins는 이번에 줄 코인(하루 한도를 넘으면 0) */
-  constructor(private root: HTMLElement, private onFinish: (game: MiniGame, coins: number) => void) {}
+  constructor(private root: HTMLElement, private onFinish: (game: MiniGame, score: number, coins: number) => void) {}
+
+  /** 오늘의 순위가 새로 왔을 때. 열려 있는 순위표도 바로 바꾼다. null이면 순위표를 숨긴다 */
+  setRankings(r: Rankings | null) {
+    this.ranks = r;
+    this.fillRank();
+  }
+
+  private rankSection() {
+    this.rankBox = el('section', 'mg-rank');
+    this.fillRank();
+    return this.rankBox;
+  }
+
+  private fillRank() {
+    const box = this.rankBox, game = this.game;
+    if (!box || !game) return;
+    box.textContent = '';
+    box.hidden = !this.ranks;
+    if (!this.ranks) return;
+    const info: RankInfo | undefined = this.ranks[game.id];
+    box.appendChild(el('h3', undefined, info ? `오늘의 순위 · ${info.players}명 도전` : '오늘의 순위'));
+    if (!info || !info.top.length) { box.appendChild(el('p', undefined, '아직 기록이 없어요. 첫 번째로 이름을 올려 보세요.')); return; }
+    const list = el('ol', 'mg-rank-list');
+    info.top.forEach((t, i) => {
+      const li = el('li', info.rank === i + 1 ? 'is-me' : undefined);
+      li.append(el('b', undefined, String(i + 1)), el('span', undefined, t.name), el('em', undefined, game.format(t.score)));
+      list.appendChild(li);
+    });
+    box.appendChild(list);
+    if (info.rank && info.rank > info.top.length && info.mine !== null) {
+      box.appendChild(el('p', 'mg-rank-me', `내 순위 ${info.rank}위 · ${game.format(info.mine)}`));
+    }
+  }
 
   open(id: RoomId) {
     this.close();
@@ -380,6 +421,7 @@ export class MiniGamePanel {
     const best = save.best[game.id];
     const left = Math.max(0, PAID_PLAYS - (save.plays[game.id] ?? 0));
     this.root.appendChild(el('p', 'mg-meta', `${best !== undefined ? `내 최고 ${best}점 · ` : ''}한 판에 코인 최대 ${MAX_COINS}개 · 오늘 코인 받는 판 ${left}번 남음`));
+    this.root.appendChild(this.rankSection());
     const foot = el('div', 'modal-foot');
     const start = button('btn solid', '시작');
     start.addEventListener('click', () => this.play());
@@ -390,6 +432,7 @@ export class MiniGamePanel {
   private play() {
     const game = this.game!;
     this.close();
+    this.rankBox = null;
     this.root.textContent = '';
     const stage = el('div', 'mg-stage');
     this.root.appendChild(stage);
@@ -406,12 +449,13 @@ export class MiniGamePanel {
     if (record) save.best[game.id] = r.score;
     save.plays[game.id] = plays + 1;
     try { localStorage.setItem(KEY, JSON.stringify(save)); } catch { /* ignore */ }
-    this.onFinish(game, coins);
+    this.onFinish(game, r.score, coins);
 
     this.root.textContent = '';
     this.root.appendChild(el('div', 'mg-result', r.label));
     this.root.appendChild(el('p', 'mg-meta', `${r.score}점${record ? ' · 내 최고 기록!' : ` · 내 최고 ${save.best[game.id]}점`}`));
     this.root.appendChild(el('p', undefined, coins ? `코인 ${coins}개를 받았어요.` : '오늘 이 게임에서 받을 코인은 다 받았어요. 기록 도전은 계속할 수 있어요.'));
+    this.root.appendChild(this.rankSection());
     const foot = el('div', 'modal-foot');
     const again = button('btn solid', '한 판 더');
     again.addEventListener('click', () => this.play());

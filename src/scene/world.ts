@@ -5,7 +5,7 @@ import {
   type Rect, type RoomId, type RoomLayout,
 } from './rooms';
 import { QUIZ_HOUR } from '../state/quiz';
-import { makeCounterBoard, makeDoorPlate, makeGuestbookBoard, makeQuizBoard, makeZoneTexture, makeInterestBoard, makeKioskTexture, makeSignTexture, makeStripesTexture, makeTotemFace, type LiveTexture } from './brand';
+import { makeCounterBoard, makeDoorPlate, makeGuestbookBoard, makeQuizBoard, makeRankBoard, makeZoneTexture, makeInterestBoard, makeKioskTexture, makeSignTexture, makeStripesTexture, makeTotemFace, type LiveTexture } from './brand';
 
 export interface Seat { pos: THREE.Vector3; yaw: number; room: RoomId | null }
 export type Wall = Rect;
@@ -40,6 +40,8 @@ export interface World {
   setCounter(visits: number, today: number): void;
   /** 방 안내판 옆 "열리면 갈래요" 숫자 */
   setInterest(room: RoomId, n: number): void;
+  /** 방 벽의 오늘의 순위판. rows는 [이름, 점수 표기]. 처음 불릴 때 나타난다 */
+  setRanking(room: RoomId, title: string, rows: [string, string][]): void;
   /** 방명록 게시판에 붙일 최근 글. 처음 불릴 때 게시판이 나타난다 */
   setGuestbook(notes: string[]): void;
 }
@@ -96,6 +98,7 @@ export function buildWorld(scene: THREE.Scene): World {
   const animated: ((dt: number) => void)[] = [];
   const interactives: THREE.Object3D[] = [];
   const interestBoards = new Map<RoomId, { mesh: THREE.Mesh; live: LiveTexture<[number]> }>();
+  const rankBoards = new Map<RoomId, { mesh: THREE.Mesh; live: LiveTexture<[string, [string, string][]]> }>();
   const decal = { polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 };
 
   const wallMat = new THREE.MeshStandardMaterial({ color: 0xf2eee8, roughness: 0.95 });
@@ -333,6 +336,15 @@ export function buildWorld(scene: THREE.Scene): World {
     scene.add(interestMesh);
     interestBoards.set(theme.id, { mesh: interestMesh, live: interest });
 
+    // 안내판 반대편 옆 "오늘의 순위". 순위가 올 때까지 숨긴다
+    const rank = makeRankBoard();
+    const rankMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 1.21), new THREE.MeshBasicMaterial({ map: rank.tex, transparent: true, ...decal }));
+    rankMesh.position.copy(local(f, -2.62, f.halfV - WALL_THICKNESS / 2 - 0.12, 1.42));
+    rankMesh.rotation.y = sign.rotation.y;
+    rankMesh.visible = false;
+    scene.add(rankMesh);
+    rankBoards.set(theme.id, { mesh: rankMesh, live: rank });
+
     // 방 조명
     const light = new THREE.PointLight(theme.light, theme.lightIntensity, 13, 2);
     light.position.set(f.center.x, 2.4, f.center.z);
@@ -568,6 +580,12 @@ export function buildWorld(scene: THREE.Scene): World {
     setGuestbook(notes) {
       guestbook.set(notes);
       guestGroup.visible = true;
+    },
+    setRanking(room, title, rows) {
+      const b = rankBoards.get(room);
+      if (!b) return;
+      b.live.set(title, rows);
+      b.mesh.visible = true;
     },
     setInterest(room, n) {
       const b = interestBoards.get(room);

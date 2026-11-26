@@ -256,3 +256,17 @@ button.brand { text-align: left; cursor: pointer; }
 .mg-note { position: absolute; left: 50%; top: 0; width: 44px; height: 44px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 14px rgba(255, 56, 92, .8); opacity: 0; }
 .mg-note.is-hit { background: #9df7ff; box-shadow: 0 0 22px #9df7ff; }
 .mg-note.is-miss { background: #555; box-shadow: none; }
+
+/* 미니게임 오늘의 순위 */
+.mg-rank { margin-top: 14px; padding: 12px 14px; border-radius: 14px; background: rgba(26, 26, 26, .05); }
+.mg-rank[hidden] { display: none; }
+.mg-rank h3 { margin: 0 0 8px; font-size: 12.5px; font-weight: 800; }
+.mg-rank-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.mg-rank-list li { display: grid; grid-template-columns: 22px 1fr auto; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 9px; font-size: 13px; }
+.mg-rank-list b { font-weight: 800; color: var(--muted); text-align: center; }
+.mg-rank-list li:first-child b { color: #d99a00; }
+.mg-rank-list span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.mg-rank-list em { font-style: normal; font-weight: 800; font-variant-numeric: tabular-nums; }
+.mg-rank-list li.is-me { background: var(--brand-soft); color: var(--brand); }
+.mg-rank-list li.is-me b { color: var(--brand); }
+.mg-rank-me { margin-top: 8px !important; color: var(--brand) !important; font-weight: 700; }

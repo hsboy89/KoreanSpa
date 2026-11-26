@@ -229,6 +229,38 @@ export function makeZoneTexture(mark: 'O' | 'X'): THREE.CanvasTexture {
   return t;
 }
 
+/** 방 벽의 오늘의 순위판. rows는 [이름, 점수 표기] 최대 3줄 */
+export function makeRankBoard(): LiveTexture<[string, [string, string][]]> {
+  return live<[string, [string, string][]]>(600, 520, (g, title, rows) => {
+    g.fillStyle = '#1a1a1a'; roundRect(g, 0, 0, 600, 520, 36); g.fill();
+    g.fillStyle = PINK; g.fillRect(0, 0, 600, 12);
+    g.textBaseline = 'middle'; g.textAlign = 'left';
+    g.fillStyle = '#ff8ca3'; g.font = `700 34px ${FONT}`;
+    g.fillText('오늘의 순위', 40, 70);
+    g.fillStyle = '#ffffff'; g.font = `800 50px ${FONT}`;
+    g.fillText(title, 40, 134);
+    const medals = ['#ffd166', '#d9d9d9', '#d99a6c'];
+    rows.slice(0, 3).forEach(([name, score], i) => {
+      const y = 232 + i * 92;
+      g.fillStyle = medals[i]; g.beginPath(); g.arc(68, y, 28, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#1a1a1a'; g.font = `800 32px ${FONT}`; g.textAlign = 'center';
+      g.fillText(String(i + 1), 68, y + 2);
+      g.textAlign = 'right'; g.fillStyle = '#ffd166'; g.font = `800 36px ${FONT}`;
+      g.fillText(score, 560, y);
+      const room = 560 - g.measureText(score).width - 24 - 116;
+      g.textAlign = 'left'; g.fillStyle = '#ffffff'; g.font = `600 32px ${FONT}`;
+      let text = name;
+      while (text.length > 2 && g.measureText(text).width > room) text = text.slice(0, -2) + '…';
+      g.fillText(text, 116, y);
+    });
+    if (!rows.length) {
+      g.fillStyle = '#bdbdbd'; g.font = `600 34px ${FONT}`;
+      g.fillText('아직 기록이 없어요', 40, 250);
+      g.fillText('첫 번째로 도전해 보세요', 40, 304);
+    }
+  });
+}
+
 /** 설문 키오스크 화면 */
 export function makeKioskTexture(): THREE.CanvasTexture {
   const c = document.createElement('canvas');

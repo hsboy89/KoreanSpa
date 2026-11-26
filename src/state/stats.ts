@@ -32,6 +32,29 @@ export type EventKind = 'party_click' | 'quiz_join' | 'quiz_perfect' | 'wardrobe
 /** 가장 최근 퀴즈 우승자 */
 export interface Winners { day: string; count: number; names: string[] }
 
+/** 한 게임의 오늘 순위 */
+export interface RankInfo { players: number; top: { name: string; score: number }[]; rank: number | null; mine: number | null }
+/** 방 id → 그 방 게임의 오늘 순위. 아무도 안 한 게임은 빠져 있다 */
+export type Rankings = Record<string, RankInfo>;
+
+function normalizeRankings(raw: unknown): Rankings | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const out: Rankings = {};
+  for (const [game, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!v || typeof v !== 'object') continue;
+    const r = v as Record<string, unknown>;
+    out[game] = {
+      players: num(r.players),
+      top: Array.isArray(r.top)
+        ? r.top.filter(t => t && typeof t === 'object').slice(0, 5).map(t => ({ name: String((t as { name?: unknown }).name ?? '').slice(0, 16), score: num((t as { score?: unknown }).score) }))
+        : [],
+      rank: typeof r.rank === 'number' ? r.rank : null,
+      mine: typeof r.mine === 'number' ? r.mine : null,
+    };
+  }
+  return out;
+}
+
 let offset = 0;
 /** 서버 시각 - 이 기기 시각(ms). 퀴즈 시작을 모두에게 같은 순간으로 맞추는 데 쓴다 */
 export const clockOffset = () => offset;
@@ -53,6 +76,10 @@ export interface StatsApi {
   event(kind: EventKind): void;
   quizWin(name: string): void;
   winners(): Promise<Winners | null>;
+  /** 오늘의 게임 순위. 불러오지 못하면 null */
+  rankings(): Promise<Rankings | null>;
+  /** 점수를 올리고 새 순위를 받는다. 서버는 그날 최고 점수만 남긴다 */
+  submitScore(game: RoomId, score: number, name: string): Promise<Rankings | null>;
 }
 
 const VISITOR_KEY = 'parting.visitor';
@@ -136,6 +163,18 @@ class SupabaseStats implements StatsApi {
   event(kind: EventKind) { this.fire('lounge_event', { p_visitor: this.id, p_kind: kind }); }
   quizWin(name: string) { this.fire('lounge_quiz_win', { p_visitor: this.id, p_name: name }); }
 
+  async rankings(): Promise<Rankings | null> {
+    const { data, error } = await this.client.rpc('lounge_scores_today', { p_visitor: this.id });
+    if (error) return null;
+    return normalizeRankings(data);
+  }
+
+  async submitScore(game: RoomId, score: number, name: string): Promise<Rankings | null> {
+    const { error } = await this.client.rpc('lounge_score_submit', { p_visitor: this.id, p_game: game, p_score: Math.round(score), p_name: name });
+    if (error) { console.warn('lounge_score_submit 실패', error.message); return null; }
+    return this.rankings();
+  }
+
   async winners(): Promise<Winners | null> {
     const { data, error } = await this.client.rpc('lounge_quiz_latest');
     if (error || !data || typeof data !== 'object') return null;
@@ -162,12 +201,12 @@ class SupabaseStats implements StatsApi {
 /** 서버 설정이 없는 개발 환경용. 이 브라우저의 기록만 센다 */
 class LocalStats implements StatsApi {
   private key = 'parting.localstats';
-  private data: { days: string[]; interest: string[]; survey: Answers | null; notes: Note[]; seconds: number; events: Record<string, number>; winner: Winners | null };
+  private data: { days: string[]; interest: string[]; survey: Answers | null; notes: Note[]; seconds: number; events: Record<string, number>; winner: Winners | null; scores: Record<string, { day: string; score: number; name: string }> };
 
   constructor() {
     let d: Partial<LocalStats['data']> = {};
     try { d = JSON.parse(localStorage.getItem(this.key) ?? '{}'); } catch { /* ignore */ }
-    this.data = { days: d.days ?? [], interest: d.interest ?? [], survey: d.survey ?? null, notes: d.notes ?? [], seconds: d.seconds ?? 0, events: d.events ?? {}, winner: d.winner ?? null };
+    this.data = { days: d.days ?? [], interest: d.interest ?? [], survey: d.survey ?? null, notes: d.notes ?? [], seconds: d.seconds ?? 0, events: d.events ?? {}, winner: d.winner ?? null, scores: d.scores ?? {} };
   }
 
   async load() {
@@ -206,6 +245,21 @@ class LocalStats implements StatsApi {
   event(kind: EventKind) { this.data.events[kind] = 1; void this.save(); }
   quizWin(name: string) { this.data.winner = { day: new Date().toISOString().slice(0, 10), count: 1, names: [name] }; void this.save(); }
   async winners() { return this.data.winner; }
+  async rankings(): Promise<Rankings> {
+    const today = new Date().toDateString();
+    const out: Rankings = {};
+    for (const [game, v] of Object.entries(this.data.scores)) {
+      if (v.day === today) out[game] = { players: 1, top: [{ name: v.name, score: v.score }], rank: 1, mine: v.score };
+    }
+    return out;
+  }
+  async submitScore(game: RoomId, score: number, name: string) {
+    const today = new Date().toDateString();
+    const old = this.data.scores[game];
+    if (score > 0 && (!old || old.day !== today || score > old.score)) this.data.scores[game] = { day: today, score, name };
+    await this.save();
+    return this.rankings();
+  }
 
   private save() {
     try { localStorage.setItem(this.key, JSON.stringify(this.data)); } catch { /* ignore */ }
